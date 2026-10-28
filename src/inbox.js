@@ -159,7 +159,7 @@ function toDeal(key, user) {
   const t = thread(key, user);
   if (t.deal) return t.deal.id;
   const first = t.messages.find((m) => m.direction === 'in');
-  const r = deals.createDeal({ type: 'autre', name: first.from_name || first.from_addr.split('@')[0], email: first.from_addr, message: first.body.slice(0, 2000), source: 'crm', title: first.subject.slice(0, 120) }, user);
+  const r = deals.createDeal({ name: first.from_name || first.from_addr.split('@')[0], email: first.from_addr, message: first.body.slice(0, 2000), source: 'crm', title: first.subject.slice(0, 120), lenient: true }, user);
   db.run('UPDATE messages SET thread = ?, deal_id = ?, contact_id = ? WHERE thread = ?', `d${r.id}`, r.id, r.contact_id, key);
   return r.id;
 }

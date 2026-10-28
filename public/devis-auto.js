@@ -1,4 +1,5 @@
-/* Devis automatique : activité, groupe, coordonnées ; le prix se calcule en direct depuis le catalogue du CRM.
+/* Devis automatique B2B (modèle Privacy Escape) : 4 étapes avec une jauge (biais de complétude), activité, groupe,
+   entreprise, coordonnées, puis « Recevoir mon devis » ; le prix se calcule en direct depuis le catalogue du CRM.
    À l'envoi, le serveur recalcule tout : le prix affiché ici n'est jamais repris tel quel. */
 'use strict';
 (function () {
@@ -13,7 +14,8 @@
   const money = (c) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(c / 100);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let cat = null;
-  const st = { step: 1, product: null, people: 10, date: '', options: [], name: '', email: '', phone: '', consent: false };
+  const st = { step: 1, product: null, people: 10, date: '', options: [], company: '', first_name: '', last_name: '', role: '', email: '', phone: '', consent: false };
+  const STEPS = ['votre activité', 'votre groupe', 'votre entreprise', 'vos coordonnées'];
 
   function lines() {
     const p = cat.activities.find((a) => a.id === st.product);
@@ -33,7 +35,7 @@
 
   function render() {
     const p = cat.activities.find((a) => a.id === st.product);
-    stepEl.textContent = `Étape ${st.step} sur 3 · ${['votre activité', 'votre groupe', 'vos coordonnées'][st.step - 1]}`;
+    stepEl.innerHTML = `<span class="gauge" aria-hidden="true"><i style="width:${(st.step / 4) * 100}%"></i></span>Étape ${st.step} sur 4 · ${STEPS[st.step - 1]}`;
     if (st.step === 1) {
       title.innerHTML = 'Votre devis<br>en ligne';
       form.innerHTML = `<div class="field"><span>Activité</span><div class="chips">${cat.activities.map((a) => `<button type="button" class="chip${a.id === st.product ? ' on' : ''}" data-p="${a.id}">${esc(a.name)}</button>`).join('')}</div></div>
@@ -59,9 +61,19 @@
       form.querySelectorAll('[data-o]').forEach((c) => c.onchange = () => { const id = Number(c.dataset.o); st.options = c.checked ? [...st.options, id] : st.options.filter((x) => x !== id); form.querySelector('#sum').innerHTML = summary(); });
       form.date.oninput = () => { st.date = form.date.value; };
     } else if (st.step === 3) {
+      title.innerHTML = 'Votre<br>entreprise';
+      form.innerHTML = `<label class="field"><span>Entreprise${cat.sirene ? ' · le plus simple : son numéro SIRET, ou son nom' : ''}</span><input name="company" autocomplete="organization" required value="${esc(st.company)}"></label>
+        <div id="sir"></div>
+        <div class="grid g2"><label class="field"><span>Prénom</span><input name="first_name" autocomplete="given-name" required value="${esc(st.first_name)}"></label>
+        <label class="field"><span>Nom</span><input name="last_name" autocomplete="family-name" required value="${esc(st.last_name)}"></label></div>
+        <label class="field"><span>Votre poste</span><input name="role" autocomplete="organization-title" value="${esc(st.role)}" placeholder="ex. assistante de direction, responsable RH"></label>
+        <p class="error" id="auto-err" hidden></p>
+        <div class="actions" style="justify-content:space-between"><button type="button" class="btn btn-ghost" data-back>Retour</button><button class="btn btn-primary" type="submit">Continuer</button></div>`;
+      ['company', 'first_name', 'last_name', 'role'].forEach((k) => { form[k].oninput = () => { st[k] = form[k].value; }; });
+      if (cat.sirene) bindSirene();
+    } else if (st.step === 4) {
       title.innerHTML = 'Vos<br>coordonnées';
       form.innerHTML = `${summary()}
-        <label class="field"><span>Nom et prénom</span><input name="name" autocomplete="name" required value="${esc(st.name)}"></label>
         <label class="field"><span>Mail (pour recevoir le devis)</span><input type="email" name="email" autocomplete="email" required value="${esc(st.email)}"></label>
         <label class="field"><span>Téléphone</span><input type="tel" name="phone" autocomplete="tel" value="${esc(st.phone)}"></label>
         <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -71,12 +83,36 @@
         <div class="actions" style="justify-content:space-between"><button type="button" class="btn btn-ghost" data-back>Retour</button><button class="btn btn-primary" type="submit">Recevoir mon devis</button></div>`;
       const ts = document.getElementById('ts-holder');
       if (ts) { ts.hidden = false; form.querySelector('#ts-slot').appendChild(ts); }
-      ['name', 'email', 'phone'].forEach((k) => { form[k].oninput = () => { st[k] = form[k].value; }; });
+      ['email', 'phone'].forEach((k) => { form[k].oninput = () => { st[k] = form[k].value; }; });
       form.consent.onchange = () => { st.consent = form.consent.checked; };
     }
     const back = form.querySelector('[data-back]');
-    if (back) back.onclick = () => { if (st.step === 3) { const ts = document.getElementById('ts-holder'); if (ts) { ts.hidden = true; root.appendChild(ts); } } st.step--; render(); };
+    if (back) back.onclick = () => { if (st.step === 4) { const ts = document.getElementById('ts-holder'); if (ts) { ts.hidden = true; root.appendChild(ts); } } st.step--; render(); };
     sendHeight();
+  }
+
+  // L'organisme qui règle, trouvé dans la base Sirene (option activée dans le CRM)
+  function card(c) {
+    return `<div class="sir-card"><small>Entreprise</small><b>${esc(c.name)}</b><span>${esc(c.address)}</span><span>SIRET ${esc(c.siret)}</span><button type="button" class="link small" id="sir-other">Choisir un autre organisme</button></div>`;
+  }
+  function bindSirene() {
+    const box = form.querySelector('#sir');
+    if (st.pick) { box.innerHTML = card(st.pick); box.querySelector('#sir-other').onclick = () => { st.pick = null; box.innerHTML = ''; form.company.focus(); }; }
+    let t;
+    form.company.addEventListener('input', () => {
+      clearTimeout(t); st.pick = null;
+      const q = form.company.value.trim();
+      if (q.length < 3) { box.innerHTML = ''; return; }
+      t = setTimeout(async () => {
+        try {
+          const list = await (await fetch(`/api/public/sirene?q=${encodeURIComponent(q)}`)).json();
+          if (!Array.isArray(list) || !list.length) { box.innerHTML = '<p class="small muted">Aucune entreprise trouvée : gardez le nom tapé.</p>'; return; }
+          box.innerHTML = list.map((c, i) => `<button type="button" class="sirene-hit" data-i="${i}"><b>${esc(c.name)}</b><small>SIRET ${esc(c.siret)} · ${esc(c.address)}</small></button>`).join('');
+          box.querySelectorAll('[data-i]').forEach((b) => b.onclick = () => { st.pick = list[Number(b.dataset.i)]; st.company = st.pick.name; form.company.value = st.pick.name; bindSirene(); sendHeight(); });
+          sendHeight();
+        } catch { box.innerHTML = ''; }
+      }, 450);
+    });
   }
 
   function ready(d) {
@@ -85,10 +121,9 @@
     form.innerHTML = `<div class="pub-box"><div class="pub-box-title">Devis N° ${esc(d.number)}</div>
         <div class="pub-total"><span>Total TTC</span><strong>${esc(d.total)}</strong></div>
         <a class="link" href="${esc(d.pdf_url)}" target="_blank" rel="noopener">Voir le devis (PDF)</a></div>
-      ${d.deposit_pct ? `<div class="pub-deposit"><span>Acompte de ${esc(String(d.deposit_pct).replace('.', ','))} % pour bloquer la date</span><strong>${esc(d.deposit)}</strong></div>` : ''}
-      <a class="btn btn-primary btn-block" href="${esc(d.sign_url)}" target="_top">Signer et payer l'acompte</a>
-      <p class="muted center small">🔒 Paiement sécurisé par Stripe · carte bancaire</p>
-      <p class="muted center small">Le devis et le lien de signature vous ont aussi été envoyés par mail.</p>`;
+      ${d.deposit_cents ? `<div class="pub-deposit"><span>Acompte pour bloquer la date</span><strong>${esc(d.deposit)}</strong></div>` : ''}
+      <a class="btn btn-primary btn-block" href="${esc(d.sign_url)}" target="_top">Valider le devis et payer l'acompte</a>
+      <p class="muted center small">Le devis vous a aussi été envoyé par mail, avec ce lien.</p>`;
     sendHeight();
   }
 
@@ -100,7 +135,11 @@
       if (!st.date) return showErr('Choisissez une date.');
       st.step = 3; return render();
     }
-    if (!form.name.value.trim() || !form.email.value.trim()) return showErr('Indiquez votre nom et votre mail.');
+    if (st.step === 3) {
+      if (!st.company.trim() || !st.first_name.trim() || !st.last_name.trim()) return showErr('Indiquez votre entreprise, votre prénom et votre nom.');
+      st.step = 4; return render();
+    }
+    if (!form.email.value.trim()) return showErr('Indiquez votre mail : le devis y est envoyé.');
     if (!form.consent.checked) return showErr('Merci de cocher le consentement.');
     const btn = form.querySelector('button[type=submit]');
     btn.disabled = true; btn.textContent = 'Préparation du devis…';
@@ -108,7 +147,7 @@
     try {
       const r = await fetch('/api/public/devis-auto', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: st.product, people: st.people, options: st.options, event_at: st.date, name: form.name.value, email: form.email.value, phone: form.phone.value, consent: true, website: form.website.value, ts: Number(root.dataset.ts), page: root.dataset.page, 'cf-turnstile-response': tsInput ? tsInput.value : undefined }),
+        body: JSON.stringify({ product_id: st.product, people: st.people, options: st.options, event_at: st.date, company: st.company, company_siret: st.pick?.siret, company_address: st.pick?.address, first_name: st.first_name, last_name: st.last_name, role: st.role, email: form.email.value, phone: form.phone.value, consent: true, website: form.website.value, ts: Number(root.dataset.ts), page: root.dataset.page, 'cf-turnstile-response': tsInput ? tsInput.value : undefined }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'Envoi impossible. Réessayez.');

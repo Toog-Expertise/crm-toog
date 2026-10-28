@@ -13,17 +13,22 @@ const STATUS_LABEL = {
   bounced: 'rejeté', complained: 'signalé comme spam', failed: 'échec', simulated: 'simulé (Resend non branché)', delayed: 'retardé',
 };
 
+// Variables communes : l'établissement, la personne à contacter, son téléphone
 function baseVars() {
   const c = settings.get('company');
-  return { entreprise: c.name, telephone: c.phone, site: c.website };
+  return { etablissement: c.name, entreprise: c.name, contact: c.contact_name || c.name, telephone: c.contact_phone || c.phone, site: c.website };
 }
+
+// Champs facultatifs : la ligne qui les contient disparaît quand ils sont vides (pas de plaquette, pas de réduction)
+const OPTIONAL = ['plaquette', 'reduction'];
 
 function render(key, vars) {
   const tpl = settings.mailTemplate(key);
   if (!tpl) throw new Error(`Modèle de mail inconnu : ${key}`);
   const v = { ...baseVars(), ...vars };
   const subject = fill(tpl.subject, v);
-  const text = fill(tpl.body, v);
+  const body = String(tpl.body || '').split('\n').filter((l) => !OPTIONAL.some((k) => new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`).test(l) && !String(v[k] ?? '').trim())).join('\n');
+  const text = fill(body, v).replace(/\n{3,}/g, '\n\n');
   return { subject, text, html: layout(text) };
 }
 
@@ -110,7 +115,7 @@ async function send({ to, template, vars = {}, subject: customSubject, text: cus
   }
   db.update('emails', id, { status, provider_id, error, updated_at: settings.now() });
   // Les mails envoyés au client apparaissent aussi dans sa conversation (écran Messages), sauf les codes
-  if (contact_id && template !== 'code_signature') {
+  if (contact_id) {
     db.insert('messages', {
       thread: deal_id ? `d${deal_id}` : `c${contact_id}`, direction: 'out', deal_id, contact_id,
       from_addr: config.resend.from || null, to_addr: to, subject, body: text, user_id,

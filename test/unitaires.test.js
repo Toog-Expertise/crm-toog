@@ -93,3 +93,11 @@ test('écrans : aucun fichier JavaScript en erreur de syntaxe', () => {
   const dir = path.join(__dirname, '..', 'public');
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) execFileSync(process.execPath, ['--check', path.join(dir, f)]);
 });
+
+test('IBAN : clé de contrôle ; Sirene : fiche lue', () => {
+  const payments = require('../src/payments');
+  assert.equal(payments.validIban('FR76 3000 6000 0112 3456 7890 189'), true);
+  assert.equal(payments.validIban('FR76 3000 6000 0112 3456 7890 188'), false);
+  const s = require('../src/sirene').pick({ siren: '306138900', nom_raison_sociale: 'EXEMPLE', siege: { siret: '30613890000000', adresse: '1 RUE TEST 59000 LILLE', libelle_commune: 'LILLE', etat_administratif: 'A' }, activite_principale: '70.10Z' });
+  assert.deepEqual([s.name, s.siret, s.city, s.naf, s.active], ['EXEMPLE', '30613890000000', 'LILLE', '70.10Z', true]);
+});

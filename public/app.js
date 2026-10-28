@@ -117,18 +117,20 @@
   });
 
   // --- Mise en page : menu, barre téléphone ---
+  // Le menu : l'essentiel (Accueil, Devis, Mails auto, Équipe), Paramètres en bas,
+  // et « Pour aller plus loin » (montré, pas au programme du module)
   const NAV = [
     { key: 'accueil', href: '#/', label: 'Accueil', icon: '⌂' },
-    { key: 'demandes', href: '#/demandes', label: 'Demandes', icon: '▦' },
-    { key: 'messages', href: '#/messages', label: 'Messages', icon: '✉' },
-    { key: 'contacts', href: '#/contacts', label: 'Contacts', icon: '☺' },
     { key: 'devis', href: '#/devis', label: 'Devis', icon: '✎' },
-    { key: 'paiements', href: '#/paiements', label: 'Paiements', icon: '€' },
-    { key: 'relances', href: '#/relances', label: 'Relances', icon: '↻' },
-    { key: 'catalogue', href: '#/catalogue', label: 'Catalogue', icon: '☰' },
-    { key: 'agenda', href: '#/agenda', label: 'Agenda', icon: '◷' },
+    { key: 'mails', href: '#/mails', label: 'Mails auto', icon: '✉' },
     { key: 'equipe', href: '#/equipe', label: 'Équipe', icon: '♟' },
-    { key: 'parametres', href: '#/parametres', label: 'Paramètres', icon: '⚙' },
+  ];
+  const MORE = [
+    { key: 'messages', href: '#/messages', label: 'Messages' },
+    { key: 'contacts', href: '#/contacts', label: 'Contacts' },
+    { key: 'paiements', href: '#/paiements', label: 'Paiements' },
+    { key: 'agenda', href: '#/agenda', label: 'Agenda' },
+    { key: 'api', href: '#/parametres/api', label: 'MCP et API' },
   ];
   const can = (area) => CRM.me.access.includes(area);
 
@@ -137,15 +139,16 @@
   }
 
   function layout(active) {
-    const items = NAV.filter((n) => can(n.key));
+    const link = (n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}">${n.label}${n.key === 'messages' && CRM.me.unread_messages ? h`<span class="count">${CRM.me.unread_messages}</span>` : ''}</a>`;
+    const moreOpen = MORE.some((n) => n.key === active);
     $('#side').innerHTML = h`${logoHtml('side-logo')}
-      <nav class="nav">${items.map((n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}">${n.label}${n.key === 'accueil' && CRM.me.pending_actions ? h`<span class="count">${CRM.me.pending_actions}</span>` : ''}${n.key === 'messages' && CRM.me.unread_messages ? h`<span class="count">${CRM.me.unread_messages}</span>` : ''}</a>`)}</nav>
-      <div class="side-user"><b>${CRM.me.user.name} · ${CRM.me.user.role_label.toLowerCase()}</b><span class="muted">${CRM.me.user.email}</span><br><a class="link" href="#/compte">Mon compte</a> · <button class="link" id="logout">Se déconnecter</button></div>`.s;
+      <nav class="nav">${NAV.map(link)}</nav>
+      <details class="nav-more" ${moreOpen ? 'open' : ''}><summary>Pour aller plus loin</summary><nav class="nav">${MORE.map(link)}</nav></details>
+      <nav class="nav nav-bottom">${link({ key: 'parametres', href: '#/parametres', label: 'Paramètres' })}</nav>
+      <div class="side-user"><b>${CRM.me.user.name}</b><span class="muted">${CRM.me.user.email}</span><br><a class="link" href="#/compte">Mon compte</a> · <button class="link" id="logout">Se déconnecter</button></div>`.s;
     $('#logout').onclick = async () => { await api('POST', '/auth/logout', {}); location.href = '/login'; };
-    const main = items.slice(0, 4);
-    const more = items.length > 5;
-    $('#mobile-bar').innerHTML = h`${(more ? main : items).map((n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}"><i>${n.icon}</i>${n.label}</a>`)}${more ? h`<button id="more-btn" class="${main.some((n) => n.key === active) ? '' : 'on'}"><i>⋯</i>Plus</button>` : ''}`.s;
-    if (more) $('#more-btn').onclick = () => modal('Menu', h`<div class="nav">${items.slice(4).map((n) => h`<a href="${n.href}" data-go>${n.label}</a>`)}<a href="#/compte" data-go>Mon compte</a></div>`, { submit: null, onOpen: (f) => $$('[data-go]', f).forEach((a) => a.addEventListener('click', () => f.close(null))) });
+    $('#mobile-bar').innerHTML = h`${NAV.map((n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}"><i>${n.icon}</i>${n.label}</a>`)}<button id="more-btn" class="${NAV.some((n) => n.key === active) ? '' : 'on'}"><i>⋯</i>Plus</button>`.s;
+    $('#more-btn').onclick = () => modal('Menu', h`<div class="nav"><a href="#/parametres" data-go>Paramètres</a><a href="#/compte" data-go>Mon compte</a></div><p class="label" style="margin-top:14px">Pour aller plus loin</p><div class="nav">${MORE.map((n) => h`<a href="${n.href}" data-go>${n.label}</a>`)}</div>`, { submit: null, onOpen: (f) => $$('[data-go]', f).forEach((a) => a.addEventListener('click', () => f.close(null))) });
     $('#demo-badge').hidden = !CRM.me.demo;
   }
 
@@ -174,13 +177,13 @@
     const parts = hash.split('?')[0].split('/').filter(Boolean);
     const params = new URLSearchParams(hash.split('?')[1] || '');
     let view = parts[0] || 'accueil';
-    const map = { accueil: 'dashboard', demandes: 'deals', messages: 'messages', contacts: 'contacts', entreprises: 'contacts', devis: 'quotes', paiements: 'payments', relances: 'reminders', catalogue: 'catalogue', agenda: 'agenda', equipe: 'team', parametres: 'settings', compte: 'account', demarrage: 'setup' };
-    const area = { dashboard: 'accueil', deals: 'demandes', messages: 'messages', contacts: 'contacts', quotes: 'devis', payments: 'paiements', reminders: 'relances', catalogue: 'catalogue', agenda: 'agenda', team: 'equipe', settings: 'parametres', setup: 'parametres' };
-    let name = map[view] || 'dashboard';
-    if (name === 'dashboard' && !can('accueil')) { location.hash = can('agenda') ? '#/agenda' : '#/compte'; return; }
-    if (area[name] && !can(area[name])) { location.hash = '#/'; return; }
-    if (name === 'dashboard' && can('parametres') && !CRM.me.setup_done && !sessionStorage.getItem('setup-later')) name = 'setup';
-    layout(area[name] || '');
+    // Demandes et devis : une seule page (#/devis) ; la fiche d'une demande reste #/demandes/123
+    if (view === 'demandes' && !parts[1]) { location.hash = '#/devis' + (hash.includes('?') ? '?' + hash.split('?')[1] : ''); return; }
+    if (view === 'relances') { location.hash = '#/mails?onglet=envois'; return; }
+    const map = { accueil: 'dashboard', demandes: 'deals', messages: 'messages', contacts: 'contacts', entreprises: 'contacts', devis: 'pipeline', mails: 'mails', paiements: 'payments', catalogue: 'catalogue', agenda: 'agenda', equipe: 'team', parametres: 'settings', compte: 'account', demarrage: 'setup' };
+    const active = { dashboard: 'accueil', deals: 'devis', pipeline: 'devis', mails: 'mails', messages: 'messages', contacts: 'contacts', payments: 'paiements', catalogue: 'parametres', agenda: 'agenda', team: 'equipe', settings: parts[1] === 'api' ? 'api' : 'parametres', setup: 'parametres' };
+    const name = map[view] || 'dashboard';
+    layout(active[name] || '');
     const main = $('#main');
     try {
       const html = await CRM.views[name]({ parts, params, view });

@@ -252,6 +252,34 @@ const MIGRATIONS = [
   CREATE INDEX messages_thread ON messages(thread, created_at);
   CREATE UNIQUE INDEX messages_provider ON messages(provider_id) WHERE provider_id IS NOT NULL;
   `,
+  // 4 : acompte propre à une prestation, moyen de paiement (carte, virement…), fiche entreprise Sirene
+  `
+  ALTER TABLE products ADD COLUMN deposit_pct REAL;              -- NULL = acompte par défaut des paramètres
+  ALTER TABLE payments ADD COLUMN method TEXT;                   -- carte | virement | especes | cheque
+  ALTER TABLE companies ADD COLUMN naf TEXT;
+  CREATE INDEX reminders_deal ON reminders(deal_id, status);
+  `,
+  // 5 : version B2B (1.3) : mots de passe, post-it, acompte fixe ou en %, moyens de paiement par devis,
+  // infos légales du signataire, nouvelles étapes (Relance email, Relance téléphonique, Réalisé, Soldé)
+  `
+  ALTER TABLE users ADD COLUMN password_hash TEXT;
+  ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
+  UPDATE users SET role = 'gerant';
+  ALTER TABLE deals ADD COLUMN postit TEXT;
+  ALTER TABLE quotes ADD COLUMN deposit_mode TEXT NOT NULL DEFAULT 'pct';   -- pct | fixe
+  ALTER TABLE quotes ADD COLUMN deposit_fixed_cents INTEGER;
+  ALTER TABLE quotes ADD COLUMN pay_methods TEXT;                           -- ["rib","stripe"] ; [] = sans lien de paiement
+  ALTER TABLE quotes ADD COLUMN signer_first_name TEXT;
+  ALTER TABLE quotes ADD COLUMN signer_last_name TEXT;
+  ALTER TABLE quotes ADD COLUMN signer_company TEXT;
+  ALTER TABLE quotes ADD COLUMN signer_role TEXT;
+  ALTER TABLE quotes ADD COLUMN signer_agreement TEXT;                      -- « bon pour accord » écrit par le client
+  ALTER TABLE payments ADD COLUMN stripe_customer TEXT;
+  UPDATE deals SET stage = 'devis_envoye' WHERE stage = 'signature';
+  UPDATE deals SET stage = 'relance_tel' WHERE stage = 'a_rappeler';
+  UPDATE reminders SET status = 'cancelled', error = 'règle retirée (B2B)' WHERE rule IN ('after_visit', 'no_answer') AND status IN ('scheduled', 'paused');
+  `,
 ];
 
 let db;

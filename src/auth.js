@@ -1,55 +1,47 @@
 'use strict';
-// Connexion : Google (réservée au domaine autorisé) et, en secours, code à 6 chiffres par mail.
+// Connexion par adresse mail et mot de passe. Le gérant crée les comptes de l'équipe et choisit leur mot de passe ;
+// tout le monde a tous les droits. Google reste possible en option (Paramètres › Accès), désactivée par défaut.
 // Toutes les vérifications se font côté serveur.
+const crypto = require('node:crypto');
 const db = require('./db');
 const settings = require('./settings');
-const mail = require('./mail');
 const rate = require('./ratelimit');
 const { config } = require('./env');
-const { sha256, randomToken, randomCode, safeEqual, normEmail, isEmail, HttpError, failuresBlocked, recordFailure } = require('./util');
-const { parseCookies, setCookie, redirect, json, html, clientIp } = require('./http');
+const { sha256, randomToken, safeEqual, normEmail, isEmail, HttpError, failuresBlocked, recordFailure } = require('./util');
+const { parseCookies, setCookie, redirect, json, clientIp } = require('./http');
 
 const COOKIE = 'crm_session';
 const SESSION_DAYS = 30;
 const secure = () => config.appUrl.startsWith('https://');
 
-function emailDomain(email) { return String(email).split('@')[1] || ''; }
-
-// Le premier compte devient gérant : l'adresse ADMIN_EMAIL si elle est réglée, sinon le premier compte du domaine.
-function canBeFirstAdmin(email, users) {
-  if (config.adminEmail) return email === config.adminEmail && !db.get("SELECT 1 FROM users WHERE role = 'gerant' AND active = 1");
-  return users === 0;
+// Mots de passe : scrypt avec un sel propre à chaque compte
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16);
+  const h = crypto.scryptSync(String(pw), salt, 32, { N: 16384, r: 8, p: 1 });
+  return `scrypt$${salt.toString('hex')}$${h.toString('hex')}`;
+}
+function checkPassword(pw, stored) {
+  const [kind, salt, hash] = String(stored || '').split('$');
+  if (kind !== 'scrypt' || !salt || !hash) return false;
+  const h = crypto.scryptSync(String(pw), Buffer.from(salt, 'hex'), 32, { N: 16384, r: 8, p: 1 });
+  return safeEqual(h.toString('hex'), hash);
+}
+function validPassword(pw) {
+  if (String(pw || '').length < 8) throw new HttpError(400, 'Le mot de passe doit faire au moins 8 caractères.');
+  if (String(pw).length > 200) throw new HttpError(400, 'Mot de passe trop long.');
+  return String(pw);
 }
 
-// Décide si une adresse peut entrer. Renvoie l'utilisateur, ou lève une erreur au message clair.
-function admit(emailRaw, name, method, req) {
+// Connexion Google (option) : seulement pour un compte déjà créé par le gérant
+function admitGoogle(emailRaw, req) {
   const email = normEmail(emailRaw);
-  if (!isEmail(email)) throw new HttpError(400, 'Adresse invalide.');
-  const domain = settings.allowedDomain();
-  const users = db.get('SELECT COUNT(*) n FROM users').n;
-  let user = db.get('SELECT * FROM users WHERE email = ?', email);
-
-  if (!domain && !(users === 0 && config.adminEmail && email === config.adminEmail)) {
-    throw new HttpError(403, "Aucun domaine autorisé n'est réglé : complétez ALLOWED_DOMAIN dans le .env du serveur.");
-  }
-  // L'adresse du gérant posée à l'installation (ADMIN_EMAIL) entre même hors du domaine
-  if (domain && emailDomain(email) !== domain && email !== config.adminEmail) {
-    throw new HttpError(403, `${email} : ce compte n'appartient pas à l'entreprise. Accès refusé.`);
-  }
-  if (user && !user.active) throw new HttpError(403, `${email} : ce compte est désactivé. Demandez au gérant de le réactiver.`);
-  if (!user) {
-    if (canBeFirstAdmin(email, users)) {
-      const id = db.insert('users', { email, name: name || email.split('@')[0], role: 'gerant', created_at: settings.now() });
-      user = db.get('SELECT * FROM users WHERE id = ?', id);
-    } else {
-      throw new HttpError(403, `${email} : vous n'avez pas encore été invité. Demandez au gérant de vous inviter depuis l'écran Équipe.`);
-    }
-  }
-  const upd = { last_login_at: settings.now(), last_login_method: method, last_login_ip: clientIp(req) };
-  if (name && (!user.name || user.name === email.split('@')[0])) upd.name = name;
-  db.update('users', user.id, upd);
+  const user = db.get('SELECT * FROM users WHERE email = ?', email);
+  if (!user) throw new HttpError(403, `${email} : pas de compte à cette adresse. Demandez au gérant de vous ajouter dans Équipe.`);
+  if (!user.active) throw new HttpError(403, `${email} : ce compte est désactivé.`);
+  db.update('users', user.id, { last_login_at: settings.now(), last_login_method: 'Google', last_login_ip: clientIp(req) });
   return db.get('SELECT * FROM users WHERE id = ?', user.id);
 }
+const googleEnabled = () => Boolean(config.google.clientId && settings.get('access').google);
 
 function startSession(res, user, req) {
   const token = randomToken(32);
@@ -79,8 +71,9 @@ function currentUser(req) {
   return u || null;
 }
 
-function can(user, area) {
-  return Boolean(user && settings.ROLES[user.role]?.access.includes(area));
+// Une seule équipe : chaque compte actif a tous les droits
+function can(user) {
+  return Boolean(user && user.active);
 }
 
 // Middlewares
@@ -89,13 +82,13 @@ function requireUser(req) {
 }
 const requireArea = (area) => (req) => {
   requireUser(req);
-  if (!can(req.user, area)) throw new HttpError(403, "Votre rôle ne donne pas accès à cette partie.");
+  if (!can(req.user, area)) throw new HttpError(403, 'Accès refusé.');
 };
 
 function register(router) {
   // --- Google ---
   router.get('/auth/google', (req, res) => {
-    if (!config.google.clientId) return redirect(res, '/login?erreur=' + encodeURIComponent("La connexion Google n'est pas encore branchée : utilisez le code par mail."));
+    if (!googleEnabled()) return redirect(res, '/login?erreur=' + encodeURIComponent("La connexion Google n'est pas activée : utilisez votre mot de passe."));
     const state = randomToken(16);
     setCookie(res, 'crm_oauth_state', state, { secure: secure(), maxAge: 600 });
     const p = new URLSearchParams({
@@ -136,7 +129,7 @@ function register(router) {
       if (!claims.email_verified) return fail(`${claims.email} : adresse non vérifiée par Google. Accès refusé.`);
       const domain = settings.allowedDomain();
       if (domain && claims.hd && claims.hd !== domain) return fail(`${claims.email} : ce compte n'appartient pas à l'entreprise. Accès refusé.`);
-      const user = admit(claims.email, claims.name, 'Google', req);
+      const user = admitGoogle(claims.email, req);
       startSession(res, user, req);
       redirect(res, '/');
     } catch (e) {
@@ -145,67 +138,22 @@ function register(router) {
     }
   });
 
-  // --- Code par mail ---
-  router.post('/auth/code/request', async (req, res) => {
+  // --- Mot de passe ---
+  router.post('/auth/login', (req, res) => {
     const email = normEmail(req.body.email);
-    if (!isEmail(email)) throw new HttpError(400, 'Adresse invalide.');
-    if (!rate.hit('code-ip:' + clientIp(req), 8, 600e3) || !rate.hit('code-mail:' + email, 3, 600e3)) throw new HttpError(429, 'Trop de demandes. Réessayez dans quelques minutes.');
-    if (failuresBlocked(db, 'login:' + email)) throw new HttpError(429, 'Trop de codes faux pour cette adresse aujourd’hui : réessayez demain, ou connectez-vous avec Google.');
-    // Mêmes règles que Google, vérifiées avant l'envoi (sans créer de session)
-    const domain = settings.allowedDomain();
+    if (!isEmail(email) || !req.body.password) throw new HttpError(400, 'Adresse et mot de passe, s’il vous plaît.');
+    if (!rate.hit('login-ip:' + clientIp(req), 20, 600e3)) throw new HttpError(429, 'Trop d’essais. Réessayez dans quelques minutes.');
+    if (failuresBlocked(db, 'login:' + email)) throw new HttpError(429, 'Trop de mots de passe faux pour cette adresse aujourd’hui : demandez au gérant de le changer.');
     const user = db.get('SELECT * FROM users WHERE email = ?', email);
-    const users = db.get('SELECT COUNT(*) n FROM users').n;
-    const firstAdmin = canBeFirstAdmin(email, users);
-    if (domain && email.split('@')[1] !== domain && !(config.adminEmail === email)) throw new HttpError(403, `${email} : ce compte n'appartient pas à l'entreprise. Accès refusé.`);
-    if (!domain && !(config.adminEmail === email)) throw new HttpError(403, "Aucun domaine autorisé n'est réglé : complétez ALLOWED_DOMAIN dans le .env du serveur.");
-    if (user && !user.active) throw new HttpError(403, `${email} : ce compte est désactivé.`);
-    if (!user && !firstAdmin) throw new HttpError(403, `${email} : vous n'avez pas encore été invité. Demandez au gérant de vous inviter.`);
-    const code = randomCode();
-    db.run('INSERT INTO login_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0',
-      email, sha256(config.sessionSecret + code), Date.now() + 600e3);
-    const lien = `${config.appUrl}/auth/lien?e=${encodeURIComponent(email)}&c=${code}`;
-    const r = await mail.send({ to: email, template: 'code_connexion', vars: { code, lien } });
-    if (r.status === 'failed') throw new HttpError(502, "Le mail n'a pas pu partir. Réessayez, ou contactez le gérant.");
-    json(res, { ok: true, simulated: r.status === 'simulated' });
-  });
-
-  // Vérifie le code (saisi, ou porté par le lien du mail) et ouvre la session
-  function checkCode(req, res, emailRaw, codeRaw) {
-    const email = normEmail(emailRaw);
-    const code = String(codeRaw || '').replace(/\D/g, '');
-    const row = db.get('SELECT * FROM login_codes WHERE email = ?', email);
-    if (!row || row.expires_at < Date.now()) throw new HttpError(400, 'Code expiré : demandez-en un nouveau.');
-    if (failuresBlocked(db, 'login:' + email)) throw new HttpError(429, 'Trop de codes faux pour cette adresse aujourd’hui : réessayez demain.');
-    if (row.attempts >= 5) throw new HttpError(429, 'Trop d’essais : demandez un nouveau code.');
-    db.run('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?', email);
-    if (!safeEqual(row.code_hash, sha256(config.sessionSecret + code))) { recordFailure(db, 'login:' + email); throw new HttpError(400, 'Code incorrect.'); }
-    db.run('DELETE FROM login_codes WHERE email = ?', email);
-    const user = admit(email, null, 'code par mail', req);
-    startSession(res, user, req);
-  }
-
-  router.post('/auth/code/verify', (req, res) => {
-    checkCode(req, res, req.body.email, req.body.code);
-    json(res, { ok: true });
-  });
-
-  // Lien du mail : une page avec un bouton (un clic volontaire : les robots qui ouvrent les liens ne consomment pas le code)
-  router.get('/auth/lien', (req, res) => {
-    const pages = require('./pages');
-    const e = req.query.get('e') || '', c = req.query.get('c') || '';
-    const esc = require('./util').escapeHtml;
-    html(res, pages.page({ title: 'Connexion', bodyClass: 'app-bg', body: `<main class="login"><form class="login-card" method="post" action="/auth/lien">
-      <h1>Connexion</h1><p>Se connecter au CRM avec <b>${esc(e)}</b>.</p>
-      <input type="hidden" name="e" value="${esc(e)}"><input type="hidden" name="c" value="${esc(c)}">
-      <button class="btn btn-primary btn-block" type="submit">Se connecter</button></form></main>` }));
-  });
-  router.post('/auth/lien', (req, res) => {
-    try {
-      checkCode(req, res, req.body.e, req.body.c);
-      redirect(res, '/');
-    } catch (e) {
-      redirect(res, '/login?erreur=' + encodeURIComponent(e.status ? e.message : 'Connexion impossible.'));
+    // Même réponse que l'adresse existe ou non
+    if (!user || !user.password_hash || !checkPassword(req.body.password, user.password_hash)) {
+      recordFailure(db, 'login:' + email);
+      throw new HttpError(400, 'Adresse ou mot de passe incorrect.');
     }
+    if (!user.active) throw new HttpError(403, 'Ce compte est désactivé. Demandez au gérant de le réactiver.');
+    db.update('users', user.id, { last_login_at: settings.now(), last_login_method: 'mot de passe', last_login_ip: clientIp(req) });
+    startSession(res, user, req);
+    json(res, { ok: true });
   });
 
   router.post('/auth/logout', (req, res) => {
@@ -216,4 +164,11 @@ function register(router) {
   });
 }
 
-module.exports = { userFromToken, register, currentUser, requireUser, requireArea, can, admit, COOKIE };
+// Ferme toutes les sessions d'un compte (mot de passe changé, compte désactivé)
+function closeSessions(userId, exceptReq = null) {
+  const keep = exceptReq ? parseCookies(exceptReq)[COOKIE] : null;
+  if (keep) db.run('DELETE FROM sessions WHERE user_id = ? AND id != ?', userId, sha256(keep));
+  else db.run('DELETE FROM sessions WHERE user_id = ?', userId);
+}
+
+module.exports = { userFromToken, register, currentUser, requireUser, requireArea, can, hashPassword, checkPassword, validPassword, closeSessions, googleEnabled, COOKIE };

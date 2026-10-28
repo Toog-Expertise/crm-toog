@@ -37,28 +37,28 @@ router.get('/', (req, res) => {
 
 router.get('/login', (req, res) => {
   if (req.user) return redirect(res, '/');
-  const domain = settings.allowedDomain();
   const err = req.query.get('erreur');
-  const google = Boolean(config.google.clientId);
+  const google = require('./src/auth').googleEnabled();
   const company = settings.get('company');
   const body = `<main class="login"><div class="login-card">
     ${settings.get('logo') ? pages.logoTag('login-logo') : ''}
     <h1>${escapeHtml(company.name)}</h1>
     ${err ? `<div class="alert alert-error">✕ ${escapeHtml(err)}</div>` : ''}
+    <form id="login-form" novalidate>
+      <label class="field"><span>Adresse mail</span><input type="email" name="email" autocomplete="username" required></label>
+      <label class="field"><span>Mot de passe</span><input type="password" name="password" autocomplete="current-password" required></label>
+      <p class="error" id="login-error" hidden></p>
+      <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+    </form>
+    <p class="muted center small">Mot de passe oublié ? Demandez au gérant de le changer (écran Équipe).</p>
     ${google ? `<a class="btn btn-google btn-block" href="/auth/google"><span class="g-logo" aria-hidden="true"></span>Se connecter avec Google</a>` : ''}
-    ${domain ? `<p class="accent-text center small">Réservé aux comptes @${escapeHtml(domain)}</p>` : ''}
-    <details class="code-login" ${google ? '' : 'open'}>
-      <summary>${google ? 'Pas de compte Google ? Recevoir un code par mail' : 'Recevoir un code de connexion par mail'}</summary>
-      <form id="code-form" novalidate>
-        <label class="field"><span>Votre adresse${domain ? ` @${escapeHtml(domain)}` : ''}</span><input type="email" name="email" autocomplete="email" required></label>
-        <div id="code-step" hidden><label class="field"><span>Code reçu par mail</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label></div>
-        <p class="error" id="code-error" hidden></p>
-        <p class="ok-text" id="code-info" hidden></p>
-        <button class="btn btn-ghost btn-block" type="submit" id="code-btn">Recevoir un code</button>
-      </form>
-    </details>
   </div></main>`;
   html(res, pages.page({ title: 'Connexion', body, scripts: ['/static/login.js'], bodyClass: 'app-bg' }));
+});
+
+router.get('/photo-contact', (req, res) => {
+  const f = settings.get('contact_photo');
+  if (!f || !serveFile(res, path.join(config.dataDir, 'uploads', path.basename(f)), 'public, max-age=3600')) send(res, 404, 'Pas de photo');
 });
 
 router.get('/theme.css', (req, res) => send(res, 200, pages.themeCss(), 'text/css; charset=utf-8', { 'Cache-Control': 'no-cache' }));

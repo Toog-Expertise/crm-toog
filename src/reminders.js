@@ -1,6 +1,8 @@
 'use strict';
-// Relances automatiques : devis non signé, acompte non payé, après la venue, demande sans réponse.
-// Elles s'arrêtent dès que le client signe, paie ou répond. Envois de 9 h à 19 h, jamais le dimanche (réglable).
+// Mails automatiques (écran Mails auto), pour les devis B2B : relance signature 1 (J+3) et 2 (2 jours avant l'expiration),
+// relance acompte 1 (J+2 après la signature) et 2 (la veille de l'échéance), merci à M+3 après le paiement total,
+// « il y a un an » à M+12 après l'événement. Tout s'arrête dès que le client signe, paie ou répond.
+// Envois de 9 h à 19 h, jamais le dimanche (réglable). Les étapes suivent : Relance email, Relance téléphonique.
 const db = require('./db');
 const settings = require('./settings');
 const activity = require('./activity');
@@ -27,6 +29,14 @@ function nextSlot(ts) {
 // À J+n : même heure que l'événement de départ, recalée dans la fenêtre d'envoi
 const atDay = (from, days) => nextSlot(from + days * DAY);
 
+// Même jour, n mois plus tard, à 10 h (heure de Paris)
+function atMonth(from, months) {
+  const p = parisParts(from);
+  const d = new Date(Date.UTC(p.year, p.month - 1 + months, p.day));
+  return nextSlot(parisToTs(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), 10, 0));
+}
+const delayLabel = (months) => (months === 12 ? 'un an' : months % 12 === 0 ? `${months / 12} ans` : `${months} mois`);
+
 function schedule({ deal_id, quote_id = null, rule, step = 1, channel = 'mail', label, template = null, message = null, due_at, created_by = null }) {
   return db.insert('reminders', { deal_id, quote_id, rule, step, channel, label, template, message, due_at, status: 'scheduled', created_by, created_at: settings.now() });
 }
@@ -37,79 +47,76 @@ function cancel(dealId, rules, reason) {
   return Number(r.changes);
 }
 
-function onNewDeal(dealId) {
-  const r = settings.get('reminders').no_answer;
-  if (!r.enabled) return;
-  schedule({ deal_id: dealId, rule: 'no_answer', channel: 'alert', label: 'Demande sans réponse', due_at: settings.now() + r.hours * 3600e3 });
-}
+const R = () => settings.get('reminders');
+
+// Plus d'alerte « demande sans réponse » : le tableau des devis suffit (B2B)
+function onNewDeal() {}
 
 function onQuoteSent(q) {
+  cancel(q.deal_id, ['quote_unsigned'], 'devis renvoyé');
   const deal = db.get('SELECT * FROM deals WHERE id = ?', q.deal_id);
-  cancel(q.deal_id, ['quote_unsigned', 'no_answer'], 'devis envoyé');
-  const r = settings.get('reminders').quote_unsigned;
-  if (!r.enabled || deal.reminders_paused) return;
-  const from = settings.now();
-  r.mail_days.forEach((d, i) => schedule({ deal_id: q.deal_id, quote_id: q.id, rule: 'quote_unsigned', step: i + 1, channel: 'mail', template: 'relance_devis', label: `Devis non signé · ${i === 0 ? '1re' : `${i + 1}e`} relance`, due_at: atDay(from, d) }));
-  if (r.call_day) schedule({ deal_id: q.deal_id, quote_id: q.id, rule: 'quote_unsigned', step: r.mail_days.length + 1, channel: 'call', label: 'Devis non signé · à rappeler', due_at: atDay(from, r.call_day) });
+  if (deal.reminders_paused) return;
+  const r = R(), from = settings.now();
+  if (r.sign1?.enabled) schedule({ deal_id: q.deal_id, quote_id: q.id, rule: 'quote_unsigned', step: 1, template: 'relance_devis', label: 'Relance signature 1', due_at: atDay(from, r.sign1.days) });
+  if (r.sign2?.enabled && q.valid_until) {
+    const due = nextSlot(Math.max(from + 3600e3, q.valid_until - (r.sign2.days_before || 2) * DAY));
+    if (due < q.valid_until) schedule({ deal_id: q.deal_id, quote_id: q.id, rule: 'quote_unsigned', step: 2, template: 'relance_devis_2', label: 'Relance signature 2 (le devis expire)', due_at: due });
+  }
 }
 
 function onStage(dealId, stage) {
-  if (stage !== 'nouvelle') cancel(dealId, ['no_answer'], 'demande traitée');
-  if (['signe', 'acompte', 'paye', 'perdu'].includes(stage)) {
+  if (['signe', 'acompte', 'realise', 'paye', 'perdu'].includes(stage)) {
     const n = cancel(dealId, ['quote_unsigned'], stage === 'perdu' ? 'demande perdue' : 'devis signé');
-    if (n) activity.log({ deal_id: dealId, kind: 'reminder', text: `Relances du devis arrêtées (${stage === 'perdu' ? 'demande perdue' : 'devis signé'})` });
+    if (n) activity.log({ deal_id: dealId, kind: 'reminder', text: `Relances de signature arrêtées (${stage === 'perdu' ? 'demande perdue' : 'devis validé'})` });
   }
-  if (['acompte', 'paye', 'perdu'].includes(stage)) cancel(dealId, ['deposit_unpaid'], stage === 'perdu' ? 'demande perdue' : 'acompte payé');
-  if (stage === 'perdu') cancel(dealId, ['after_visit', 'manual'], 'demande perdue');
+  if (['acompte', 'realise', 'paye', 'perdu'].includes(stage)) cancel(dealId, ['deposit_unpaid'], stage === 'perdu' ? 'demande perdue' : 'acompte payé');
+  if (stage === 'perdu') cancel(dealId, ['thanks', 'one_year', 'manual'], 'demande perdue');
   if (stage === 'signe') {
-    const r = settings.get('reminders').deposit_unpaid;
+    const r = R();
     const q = db.get("SELECT * FROM quotes WHERE deal_id = ? AND status = 'signed' ORDER BY signed_at DESC LIMIT 1", dealId);
-    if (r.enabled && q && q.deposit_cents > 0) {
+    const deal = db.get('SELECT * FROM deals WHERE id = ?', dealId);
+    if (q && q.deposit_cents > 0 && !deal.reminders_paused && !db.get("SELECT 1 FROM reminders WHERE deal_id = ? AND rule = 'deposit_unpaid' AND status IN ('scheduled', 'paused')", dealId)) {
       const from = settings.now();
-      r.days.forEach((d, i) => schedule({ deal_id: dealId, quote_id: q.id, rule: 'deposit_unpaid', step: i + 1, template: 'relance_acompte', label: 'Acompte non payé · rappel', due_at: atDay(from, d) }));
+      if (r.dep1?.enabled) schedule({ deal_id: dealId, quote_id: q.id, rule: 'deposit_unpaid', step: 1, template: 'relance_acompte', label: 'Relance acompte 1', due_at: atDay(from, r.dep1.days) });
+      if (r.dep2?.enabled) schedule({ deal_id: dealId, quote_id: q.id, rule: 'deposit_unpaid', step: 2, template: 'relance_acompte_2', label: 'Relance acompte 2 (24 h)', due_at: atDay(from, Math.max(1, (r.dep2.due_days || 7) - 1)) });
     }
   }
+  // Fidélité : merci à M+3 du paiement total, « il y a un an » à M+12 de l'événement
+  if (stage === 'paye') scheduleLoyalty(dealId);
 }
 
+function scheduleLoyalty(dealId) {
+  const deal = db.get('SELECT * FROM deals WHERE id = ?', dealId);
+  const r = R();
+  const now = settings.now();
+  if (r.m3?.enabled && !db.get("SELECT 1 FROM reminders WHERE deal_id = ? AND rule = 'thanks'", dealId)) schedule({ deal_id: dealId, rule: 'thanks', template: 'merci', label: `Merci · M+${r.m3.months}`, due_at: atMonth(now, r.m3.months) });
+  if (r.m12?.enabled && !db.get("SELECT 1 FROM reminders WHERE deal_id = ? AND rule = 'one_year'", dealId)) schedule({ deal_id: dealId, rule: 'one_year', template: 'un_an', label: `Il y a un an · M+${r.m12.months}`, due_at: atMonth(deal.event_at || now, r.m12.months) });
+}
+
+// Un paiement est arrivé : l'étape a déjà suivi (payments.js) ; les relances d'acompte s'arrêtent
 function onPaid(dealId) {
   const deal = db.get('SELECT * FROM deals WHERE id = ?', dealId);
-  if (['acompte', 'paye'].includes(deal.stage)) cancel(dealId, ['deposit_unpaid', 'quote_unsigned'], 'paiement reçu');
-  const r = settings.get('reminders').after_visit;
-  if (r.enabled && deal.event_at && !db.get("SELECT 1 FROM reminders WHERE deal_id = ? AND rule = 'after_visit'", dealId)) {
-    const p = parisParts(deal.event_at);
-    const d = new Date(Date.UTC(p.year, p.month - 1, p.day + r.days));
-    const due = nextSlot(parisToTs(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), 10, 0));
-    schedule({ deal_id: dealId, rule: 'after_visit', template: 'avis', label: 'Après la venue · avis Google', due_at: due });
-  }
+  if (['acompte', 'realise', 'paye'].includes(deal.stage)) cancel(dealId, ['deposit_unpaid', 'quote_unsigned'], 'paiement reçu');
 }
 
-// Tout est remboursé : pas de « merci de votre venue »
+// Tout est remboursé : pas de mail de fidélité
 function onRefund(dealId) {
   const kept = db.get("SELECT 1 FROM payments WHERE deal_id = ? AND status IN ('paid', 'partially_refunded')", dealId);
-  if (!kept) cancel(dealId, ['after_visit'], 'remboursé');
+  if (!kept) cancel(dealId, ['thanks', 'one_year'], 'remboursé');
 }
 
-// La date de la venue a changé : la relance « après la venue » suit
+// La date de l'événement a changé : « il y a un an » suit
 function onEventChanged(dealId) {
   const deal = db.get('SELECT * FROM deals WHERE id = ?', dealId);
-  const r = settings.get('reminders').after_visit;
-  if (!deal?.event_at) return;
-  const p = parisParts(deal.event_at);
-  const d = new Date(Date.UTC(p.year, p.month - 1, p.day + r.days));
-  db.run("UPDATE reminders SET due_at = ? WHERE deal_id = ? AND rule = 'after_visit' AND status IN ('scheduled', 'paused')", nextSlot(parisToTs(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), 10, 0)), dealId);
+  const f = R().m12;
+  if (!deal?.event_at || !f) return;
+  db.run("UPDATE reminders SET due_at = ? WHERE deal_id = ? AND rule = 'one_year' AND status IN ('scheduled', 'paused')", atMonth(deal.event_at, f.months), dealId);
 }
 
 // Le client a répondu : toutes les relances automatiques de la demande s'arrêtent
 function onClientReplied(dealId, user) {
-  const n = cancel(dealId, ['quote_unsigned', 'deposit_unpaid', 'no_answer'], 'le client a répondu');
+  const n = cancel(dealId, ['quote_unsigned', 'deposit_unpaid'], 'le client a répondu');
   activity.log({ deal_id: dealId, user_id: user?.id, kind: 'reminder', text: `Le client a répondu : ${n} relance(s) arrêtée(s)${user ? ` (${user.name})` : ''}` });
-}
-
-function teamRecipients(deal) {
-  const list = db.all("SELECT email FROM users WHERE active = 1 AND role = 'gerant'").map((u) => u.email);
-  if (deal.assigned_to) { const u = db.get('SELECT email FROM users WHERE id = ? AND active = 1', deal.assigned_to); if (u) list.push(u.email); }
-  if (config.resend.replyTo) list.push(config.resend.replyTo.replace(/^.*<(.+)>$/, '$1'));
-  return [...new Set(list)];
 }
 
 // Exécute une relance. Renvoie une raison si elle n'a plus lieu d'être.
@@ -120,36 +127,35 @@ async function execute(rem, user = null) {
   const obsolete = (why) => { db.update('reminders', rem.id, { status: 'cancelled', error: why }); return { skipped: why }; };
   if (!deal) return obsolete('demande supprimée');
   if (rem.rule === 'quote_unsigned' && (!q || q.status !== 'sent')) return obsolete('devis signé ou modifié');
-  if (rem.rule === 'no_answer' && deal.stage !== 'nouvelle') return obsolete('demande traitée');
-  if (rem.rule === 'deposit_unpaid' && ['acompte', 'paye', 'perdu'].includes(deal.stage)) return obsolete('acompte payé');
+  if (rem.rule === 'deposit_unpaid' && ['acompte', 'realise', 'paye', 'perdu'].includes(deal.stage)) return obsolete('acompte payé');
+  if (['thanks', 'one_year'].includes(rem.rule) && deal.stage === 'perdu') return obsolete('demande perdue');
+  // M+3 : pas de merci si un nouveau devis est déjà en cours pour ce client ; M+12 : pas de rappel s'il a signé dans l'année
+  const same = deal.company_id ? ['company_id', deal.company_id] : ['contact_id', deal.contact_id];
+  if (rem.rule === 'thanks' && db.get(`SELECT 1 FROM deals WHERE ${same[0]} = ? AND id != ? AND stage IN (${settings.BEFORE_SIGN.map(() => '?').join(',')})`, same[1], deal.id, ...settings.BEFORE_SIGN)) return obsolete('un nouveau devis est en cours pour ce client');
+  if (rem.rule === 'one_year' && db.get(`SELECT 1 FROM quotes q JOIN deals d ON d.id = q.deal_id WHERE d.${same[0]} = ? AND d.id != ? AND q.signed_at > ?`, same[1], deal.id, settings.now() - 365 * DAY)) return obsolete('un devis a été signé dans les 12 derniers mois');
+  const auto = { quote_unsigned: rem.step === 1 ? 'sign1' : 'sign2', deposit_unpaid: rem.step === 1 ? 'dep1' : 'dep2', thanks: 'm3', one_year: 'm12' }[rem.rule];
+  if (auto && !user && R()[auto] && !R()[auto].enabled) return obsolete('mail automatique désactivé');
 
   const by = user ? ` (${user.name})` : '';
   try {
     if (rem.channel === 'call') {
-      db.insert('tasks', { deal_id: deal.id, title: `Appeler ${fullName(c) || 'le client'}${q ? ` : devis ${q.number} non signé` : ''}`, due_at: settings.now(), assigned_to: deal.assigned_to, created_by: user?.id || null, created_at: settings.now() });
-      if (deal.stage === 'devis_envoye' || deal.stage === 'signature') require('./deals').setStage(deal.id, 'a_rappeler');
+      db.insert('tasks', { deal_id: deal.id, title: `Appeler ${fullName(c) || 'le client'}${q ? ` : devis ${q.number}` : ''}`, due_at: settings.now(), assigned_to: deal.assigned_to, created_by: user?.id || null, created_at: settings.now() });
+      if (['devis_envoye', 'relance_email'].includes(deal.stage)) require('./deals').setStage(deal.id, 'relance_tel');
       activity.log({ deal_id: deal.id, user_id: user?.id, kind: 'reminder', text: `Tâche créée : appeler le client${by}` });
-    } else if (rem.channel === 'alert') {
-      const vars = { titre: deal.title, client: fullName(c), delai: `${settings.get('reminders').no_answer.hours} h`, lien: `${config.appUrl}/#/demandes/${deal.id}` };
-      for (const to of teamRecipients(deal)) await mail.send({ to, template: 'alerte_sans_reponse', vars, deal_id: deal.id, quiet: true });
-      activity.log({ deal_id: deal.id, user_id: user?.id, kind: 'reminder', text: `Alerte à l'équipe : demande sans réponse${by}` });
     } else {
       if (!c?.email) throw new Error("le contact n'a pas d'adresse mail");
       const vars = { prenom: c.first_name, client: fullName(c), message: rem.message || '', date: deal.event_at ? dateEvent(deal.event_at) : '' };
       if (q) Object.assign(vars, require('./quotes').quoteVars(q));
-      if (rem.template === 'relance_devis') vars.lien = `${config.appUrl}/s/${require('./quotes').ensureSignToken(q)}`;
-      if (rem.template === 'relance_acompte') {
+      if (/^relance_(devis|acompte)/.test(rem.template)) vars.lien = `${config.appUrl}/s/${require('./quotes').ensureSignToken(q)}`;
+      if (/^relance_acompte/.test(rem.template)) {
         const p = require('./payments').depositFor(q);
         if (!p) return obsolete('acompte déjà réglé');
-        vars.lien = require('./payments').payLink(p);
-        vars.montant = money(p.amount_cents);
-      }
-      if (rem.template === 'avis') {
-        vars.lien = settings.get('reminders').after_visit.review_url;
-        if (!vars.lien) throw new Error("lien d'avis Google à renseigner dans Paramètres › Mails et relances");
+        vars.acompte = money(p.amount_cents);
       }
       const r = await mail.send({ to: c.email, template: rem.template || 'relance_manuelle', vars, deal_id: deal.id, contact_id: c.id, user_id: user?.id });
       if (r.status === 'failed') throw new Error(r.error || 'mail en échec');
+      // Relance de signature partie : la demande passe en « Relance email »
+      if (rem.rule === 'quote_unsigned' && deal.stage === 'devis_envoye') require('./deals').setStage(deal.id, 'relance_email');
     }
     db.update('reminders', rem.id, { status: 'sent', sent_at: settings.now(), error: null });
     return { sent: true };
@@ -169,7 +175,7 @@ async function tick() {
     const due = db.all("SELECT r.* FROM reminders r JOIN deals d ON d.id = r.deal_id WHERE r.status = 'scheduled' AND r.due_at <= ? AND d.reminders_paused = 0 ORDER BY r.due_at LIMIT 50", now);
     for (const rem of due) {
       const slot = nextSlot(now);
-      if (slot > now && rem.channel !== 'alert') { db.update('reminders', rem.id, { due_at: slot }); continue; }
+      if (slot > now) { db.update('reminders', rem.id, { due_at: slot }); continue; }
       await execute(rem);
     }
   } finally {
@@ -219,9 +225,42 @@ function manual(dealId, { due_at, message, channel = 'mail', paused = false }, u
   return get(id);
 }
 
+// Appel au client noté à la main (relance téléphonique), visible dans le suivi des relances
+const CALL_OUTCOMES = { joint: 'client joint', pas_de_reponse: 'pas de réponse', message: 'message laissé', rappeler: 'à rappeler' };
+function logCall(dealId, { outcome, note, replied }, user) {
+  const label = CALL_OUTCOMES[outcome] || CALL_OUTCOMES.joint;
+  const now = settings.now();
+  const id = db.insert('reminders', { deal_id: dealId, rule: 'call_log', step: 1, channel: 'call', label: `Appel · ${label}`, message: String(note || '').slice(0, 2000) || null, due_at: now, status: 'sent', sent_at: now, created_by: user?.id || null, created_at: now });
+  activity.log({ deal_id: dealId, user_id: user?.id, kind: 'call', text: `Relance téléphonique : ${label}${note ? ` · ${String(note).slice(0, 200)}` : ''}${user ? ` (${user.name})` : ''}` });
+  // L'appel fait : les tâches « Appeler » de la demande sont cochées
+  db.run("UPDATE tasks SET done_at = ? WHERE deal_id = ? AND done_at IS NULL AND title LIKE 'Appeler%'", now, dealId);
+  // Un appel avant la signature : la demande passe en « Relance téléphonique »
+  const d = db.get('SELECT stage FROM deals WHERE id = ?', dealId);
+  if (['devis_envoye', 'relance_email'].includes(d.stage)) require('./deals').setStage(dealId, 'relance_tel', user);
+  if (replied) onClientReplied(dealId, user);
+  return get(id);
+}
+
+// Suivi des relances d'une ou plusieurs demandes : mails partis, appels notés, prochaine relance
+function followup(dealIds) {
+  const out = {};
+  const ids = [...new Set(dealIds.map(Number).filter(Boolean))];
+  if (!ids.length) return out;
+  const marks = ids.map(() => '?').join(',');
+  for (const id of ids) out[id] = { mails: 0, calls: 0, next: null, last: null };
+  for (const r of db.all(`SELECT deal_id, channel, rule, status, label, due_at, sent_at FROM reminders WHERE deal_id IN (${marks}) AND rule IN ('quote_unsigned', 'deposit_unpaid', 'manual', 'call_log', 'thanks', 'one_year') ORDER BY due_at`, ...ids)) {
+    const f = out[r.deal_id];
+    if (r.status === 'sent') {
+      if (r.channel === 'mail' && !['thanks', 'one_year'].includes(r.rule)) f.mails++; else if (r.rule === 'call_log') f.calls++;
+      if (!f.last || r.sent_at > f.last.at) f.last = { at: r.sent_at, label: r.label };
+    } else if (r.status === 'scheduled' && !f.next) f.next = { at: r.due_at, label: r.label, channel: r.channel };
+  }
+  return out;
+}
+
 function start() {
   setInterval(() => tick().catch((e) => console.error('Relances :', e)), 60e3).unref();
   setTimeout(() => tick().catch((e) => console.error('Relances :', e)), 5e3).unref();
 }
 
-module.exports = { onRefund, onEventChanged, nextSlot, onNewDeal, onQuoteSent, onStage, onPaid, onClientReplied, tick, sendNow, postpone, cut, resume, manual, start, execute };
+module.exports = { logCall, followup, CALL_OUTCOMES, atMonth, scheduleLoyalty, onRefund, onEventChanged, nextSlot, onNewDeal, onQuoteSent, onStage, onPaid, onClientReplied, tick, sendNow, postpone, cut, resume, manual, start, execute };

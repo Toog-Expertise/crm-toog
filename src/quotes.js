@@ -22,30 +22,37 @@ function getQuote(id) {
 
 function defaultObject(deal) {
   const data = pricing.safeJson(deal.data);
-  const label = settings.dealTypeLabel(deal.type).toLowerCase();
-  let obj = label;
+  const p = data.product_id ? db.get('SELECT name FROM products WHERE id = ?', Number(data.product_id)) : null;
+  let obj = p ? p.name : settings.dealTypeLabel(deal.type).replace(/\s*\(.*\)$/, '');
   if (deal.type === 'anniversaire' && data.prenom_enfant) obj = `anniversaire de ${data.prenom_enfant}${data.age ? `, ${String(data.age).replace(/\s*ans?$/i, '')} ans` : ''}`;
   else if (deal.people) obj += ` · ${deal.people} ${deal.type === 'anniversaire' ? 'enfants' : 'personnes'}`;
   if (deal.event_at) obj += ` · ${dateEvent(deal.event_at)}`;
   return obj.charAt(0).toUpperCase() + obj.slice(1);
 }
 
+// Numérotation continue ; elle peut reprendre où l'ancien outil s'est arrêté (Paramètres › Devis › numéro de départ)
 function nextNumber() {
-  const prefix = settings.get('quotes').number_prefix || 'D';
-  const n = db.nextCounter('quote');
+  const qs = settings.get('quotes');
+  const prefix = qs.number_prefix || 'D';
+  let n = db.nextCounter('quote');
+  const start = Math.max(1, Number(qs.number_start) || 1);
+  if (n < start) { db.run("UPDATE counters SET value = ? WHERE name = 'quote'", start); n = start; }
   return `${prefix}-${new Date(settings.now()).getFullYear()}-${String(n).padStart(4, '0')}`;
 }
 
 // Crée le devis d'une demande, prérempli à partir de ce que le client a rempli
-function createQuote(dealId, user = null, lines = null) {
+// deposit : { pct } ou { fixed } (centimes) ; payMethods : tiroirs proposés sur ce devis (null = tous ceux activés)
+function createQuote(dealId, user = null, lines = null, { deposit = null, payMethods = null } = {}) {
   const deal = deals.getDeal(dealId);
   const qs = settings.get('quotes');
-  const t = pricing.totals(lines || pricing.suggestLines(deal), qs.deposit_pct);
+  const l = lines || pricing.suggestLines(deal);
+  const t = deposit ? pricing.totals(l, deposit.pct, deposit.fixed) : qs.deposit_mode === 'fixe' ? pricing.totals(l, 0, qs.deposit_fixed_cents) : pricing.totals(l, pricing.depositPctFor(l));
   const now = settings.now();
   const id = db.insert('quotes', {
     number: nextNumber(), deal_id: deal.id, status: 'draft', object: defaultObject(deal),
     lines: JSON.stringify(t.lines), total_ht: t.total_ht, total_vat: t.total_vat, total_ttc: t.total_ttc,
-    deposit_pct: t.deposit_pct, deposit_cents: t.deposit_cents, conditions: qs.conditions || '',
+    deposit_pct: t.deposit_pct, deposit_cents: t.deposit_cents, deposit_mode: t.deposit_mode, deposit_fixed_cents: t.deposit_fixed_cents,
+    pay_methods: payMethods ? JSON.stringify(payMethods) : null, conditions: qs.conditions || '',
     issued_at: now, valid_until: now + (qs.validity_days || 30) * 86400e3,
     view_token: randomToken(24), created_by: user?.id || null, created_at: now, updated_at: now,
   });
@@ -59,12 +66,15 @@ function createQuote(dealId, user = null, lines = null) {
 function updateQuote(id, input, user) {
   const q = getQuote(id);
   if (q.status === 'signed') throw new HttpError(409, 'Ce devis est signé : il ne peut plus être modifié. Créez un nouveau devis.');
-  const t = pricing.totals(Array.isArray(input.lines) ? input.lines : JSON.parse(q.lines), input.deposit_pct ?? q.deposit_pct);
+  const mode = input.deposit_mode === 'fixe' || (input.deposit_mode === undefined && q.deposit_mode === 'fixe') ? 'fixe' : 'pct';
+  const lines = Array.isArray(input.lines) ? input.lines : JSON.parse(q.lines);
+  const t = mode === 'fixe' ? pricing.totals(lines, 0, input.deposit_fixed_cents ?? q.deposit_fixed_cents) : pricing.totals(lines, input.deposit_pct ?? q.deposit_pct);
   const upd = {
     object: String(input.object ?? q.object).slice(0, 300), conditions: String(input.conditions ?? q.conditions).slice(0, 4000),
     lines: JSON.stringify(t.lines), total_ht: t.total_ht, total_vat: t.total_vat, total_ttc: t.total_ttc,
-    deposit_pct: t.deposit_pct, deposit_cents: t.deposit_cents, updated_at: settings.now(),
+    deposit_pct: t.deposit_pct, deposit_cents: t.deposit_cents, deposit_mode: t.deposit_mode, deposit_fixed_cents: t.deposit_fixed_cents, updated_at: settings.now(),
   };
+  if (Array.isArray(input.pay_methods)) upd.pay_methods = JSON.stringify(input.pay_methods.filter((k) => ['rib', 'stripe'].includes(k)));
   if (input.valid_until) upd.valid_until = Number(input.valid_until);
   if (q.status === 'sent') {
     Object.assign(upd, { status: 'draft', sign_token: null, sign_expires_at: null, sign_code_hash: null, sign_code_validated_at: null });
@@ -73,6 +83,17 @@ function updateQuote(id, input, user) {
   db.update('quotes', q.id, upd);
   return getQuote(q.id);
 }
+
+// Moyens de paiement proposés, écrits sur le devis
+function paymentText(q) {
+  const pm = settings.get('payments');
+  const methods = require('./payments').quoteMethods(q);
+  const ways = [];
+  if (methods.includes('stripe')) ways.push(`en ligne avec le lien de paiement sécurisé${pm.stripe_transfer ? ' (carte bancaire ou virement)' : ' (carte bancaire)'}`);
+  if (methods.includes('rib')) ways.push(`par virement : ${pm.holder ? `${pm.holder}, ` : ''}IBAN ${formatIban(pm.iban)}${pm.bic ? `, BIC ${pm.bic}` : ''}, référence ${q.number}`);
+  return ways.length ? `Règlement de l'acompte ${ways.join(' ; ou ')}.` : '';
+}
+const formatIban = (iban) => String(iban || '').replace(/\s/g, '').replace(/(.{4})/g, '$1 ').trim();
 
 function readLogo() {
   const f = settings.get('logo');
@@ -115,8 +136,9 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
   pdf.text(M, y, (company.name || 'Entreprise').toUpperCase(), { size: 8, bold: true, color: primary });
   pdf.text(M + W / 2 + 10, y, 'CLIENT', { size: 8, bold: true, color: primary });
   y += 16;
-  const left = [company.legal_name || '[Raison sociale à compléter]', company.address, company.phone, company.email,
-    `SIRET : ${company.siret || '[à compléter]'} · TVA : ${company.vat_number || '[à compléter]'}`].filter(Boolean);
+  const left = [[company.legal_name || '[Raison sociale à compléter]', company.legal_form, company.capital ? `au capital de ${company.capital}` : ''].filter(Boolean).join(', '),
+    company.address, company.phone, company.email,
+    `SIRET : ${company.siret || '[à compléter]'}${company.rcs ? ` · RCS ${company.rcs}` : ''}`, `TVA intracommunautaire : ${company.vat_number || '[à compléter]'}`].filter(Boolean);
   const comp = deal.company_id ? db.get('SELECT name FROM companies WHERE id = ?', deal.company_id) : null;
   const right = [comp?.name, fullName(contact), contact.email, contact.phone].filter(Boolean);
   let ly = y, ry = y;
@@ -142,7 +164,7 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
     const ty = y + 8;
     pdf.text(M + 10, ty, 'Prestation', { size: 10, bold: true, color: '#ffffff' });
     pdf.text(M + cLabel, ty, 'Qté', { size: 10, bold: true, color: '#ffffff', align: 'center', width: cQty });
-    pdf.text(M + cLabel + cQty, ty, 'Prix unitaire TTC', { size: 10, bold: true, color: '#ffffff', align: 'right', width: cUnit - 6 });
+    pdf.text(M + cLabel + cQty, ty, 'Prix unitaire HT', { size: 10, bold: true, color: '#ffffff', align: 'right', width: cUnit - 6 });
     pdf.text(M + cLabel + cQty + cUnit, ty, 'Total TTC', { size: 10, bold: true, color: '#ffffff', align: 'right', width: cTot - 10 });
     y += 26;
   };
@@ -156,7 +178,7 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
     lab.forEach((t) => { pdf.text(M + 10, ty, t, { size: 10, color: ink }); ty += 14; });
     desc.forEach((t) => { pdf.text(M + 10, ty, t, { size: 8.5, color: grey }); ty += 12; });
     pdf.text(M + cLabel, y + 9, String(l.qty), { size: 10, color: ink, align: 'center', width: cQty });
-    pdf.text(M + cLabel + cQty, y + 9, money(l.unit_cents), { size: 10, color: ink, align: 'right', width: cUnit - 6 });
+    pdf.text(M + cLabel + cQty, y + 9, money(Math.round(l.unit_cents / (1 + (l.vat_rate || 0) / 100))), { size: 10, color: ink, align: 'right', width: cUnit - 6 });
     pdf.text(M + cLabel + cQty + cUnit, y + 9, money(l.total_cents), { size: 10, color: ink, align: 'right', width: cTot - 10 });
     y += h;
     pdf.line(M, y, M + W, y);
@@ -183,12 +205,12 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
   pdf.text(tx, y + 8, 'Total TTC', { size: 12, bold: true, color: ink });
   pdf.text(tx, y, money(q.total_ttc), { size: 24, bold: true, color: primary, align: 'right', width: 230 });
   y += 36;
-  if (q.deposit_cents > 0) row(`Acompte de ${String(q.deposit_pct).replace('.', ',')} % à la signature`, money(q.deposit_cents), { bold: true });
+  if (q.deposit_cents > 0) row(q.deposit_mode === 'fixe' ? 'Acompte à la validation' : `Acompte de ${String(q.deposit_pct).replace('.', ',')} % à la validation`, money(q.deposit_cents), { bold: true });
   y += 12;
 
   // Conditions et mentions
   const qs = settings.get('quotes');
-  for (const [title, body] of [['CONDITIONS', q.conditions], ['MENTIONS', qs.legal_mentions]]) {
+  for (const [title, body] of [['CONDITIONS', q.conditions], ['RÈGLEMENT', paymentText(q)], ['MENTIONS', qs.legal_mentions]]) {
     if (!body) continue;
     const h = wrap(body, W, 9.5).length * 13.5 + 24;
     ensure(h);
@@ -200,18 +222,18 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
   // Bon pour accord
   ensure(110);
   y += 6;
-  pdf.text(M, y, 'Bon pour accord, date et signature du client', { size: 10, bold: true, color: ink });
+  pdf.text(M, y, 'Bon pour accord, date, nom et qualité du client', { size: 10, bold: true, color: ink });
   const bx = M + W / 2 + 10, bw = W / 2 - 10, bh = 84;
   if (signature) {
     pdf.rect(bx, y - 4, bw, bh, { stroke: second, lineWidth: 1, radius: 6 });
-    const img = signature.png ? pdf.image(signature.png, bx + 10, y + 2, bw - 20, 46) : null;
-    if (!img) pdf.text(bx + 10, y + 16, signature.name, { size: 14, bold: true, color: ink });
-    pdf.text(bx + 10, y + 52, `Signé électroniquement par ${signature.name}`, { size: 8.5, color: ink });
-    pdf.text(bx + 10, y + 64, `le ${dateTime(signature.at)} · code validé par mail`, { size: 8.5, color: grey });
+    pdf.text(bx + 10, y + 10, `« ${signature.agreement || 'Bon pour accord'} »`, { size: 13, bold: true, color: ink });
+    pdf.text(bx + 10, y + 32, signature.name, { size: 10, bold: true, color: ink });
+    pdf.text(bx + 10, y + 46, [signature.role, signature.company].filter(Boolean).join(' · ').slice(0, 60), { size: 8.5, color: ink });
+    pdf.text(bx + 10, y + 62, `Validé en ligne le ${dateTime(signature.at)}`, { size: 8.5, color: grey });
     pdf.text(M, y + 18, 'Bon pour accord.', { size: 10, color: ink });
   } else {
     pdf.rect(bx, y - 4, bw, bh, { stroke: second, lineWidth: 1.2, dash: [4, 3], radius: 6 });
-    pdf.text(bx, y + 32, 'Signature électronique via le lien reçu par mail', { size: 10, bold: true, color: second, align: 'center', width: bw });
+    pdf.text(bx, y + 32, 'Validation en ligne via le lien reçu par mail', { size: 10, bold: true, color: second, align: 'center', width: bw });
   }
   y += bh + 10;
   footer();
@@ -252,7 +274,8 @@ function quoteVars(q, extra = {}) {
   const c = deals.contactOf(deal) || {};
   return {
     prenom: c.first_name || fullName(c) || '', client: fullName(c), numero: q.number, montant: money(q.total_ttc),
-    validite: dateShort(q.valid_until), date: deal.event_at ? dateEvent(deal.event_at) : 'prévue', ...extra,
+    validite: dateShort(q.valid_until), date: deal.event_at ? dateEvent(deal.event_at) : 'prévue', acompte: money(q.deposit_cents),
+    societe: deal.company_id ? db.get('SELECT name FROM companies WHERE id = ?', deal.company_id)?.name || '' : '', ...extra,
   };
 }
 
@@ -266,7 +289,9 @@ function ensureSignToken(q) {
 }
 
 // mode = 'devis' (Envoyer le devis) ou 'demande_signature' (Demander la signature)
+// Le devis part avec son lien de validation et de paiement : la signature n'est plus une étape à part
 async function sendQuote(id, user = null, mode = 'devis') {
+  mode = 'devis';
   let q = getQuote(id);
   if (q.status === 'signed') throw new HttpError(409, 'Ce devis est déjà signé.');
   const deal = deals.getDeal(q.deal_id);
@@ -282,8 +307,8 @@ async function sendQuote(id, user = null, mode = 'devis') {
     to: c.email, template: mode, deal_id: deal.id, contact_id: c.id, user_id: user?.id,
     vars: quoteVars(q, { lien: link }), attachments: [{ filename: `Devis ${q.number}.pdf`, content: pdf }],
   });
-  activity.log({ deal_id: deal.id, user_id: user?.id, kind: 'quote', text: `Devis ${q.number} ${mode === 'devis' ? 'envoyé' : 'envoyé pour signature'} · ${money(q.total_ttc)}${user ? ` (${user.name})` : ''}` });
-  const target = mode === 'devis' ? 'devis_envoye' : 'signature';
+  activity.log({ deal_id: deal.id, user_id: user?.id, kind: 'quote', text: `Devis ${q.number} envoyé · ${money(q.total_ttc)}${user ? ` (${user.name})` : ''}` });
+  const target = 'devis_envoye';
   const order = settings.STAGES.map((s) => s.key);
   if (order.indexOf(deal.stage) < order.indexOf(target) || deal.stage === 'perdu') deals.setStage(deal.id, target, user);
   require('./reminders').onQuoteSent(q);
@@ -301,4 +326,4 @@ function pdfFor(q) {
   return renderPdf(q);
 }
 
-module.exports = { getQuote, createQuote, updateQuote, renderPdf, freeze, sendQuote, quoteVars, ensureSignToken, pdfFor, pdfDir, defaultObject, readLogo };
+module.exports = { formatIban, paymentText, getQuote, createQuote, updateQuote, renderPdf, freeze, sendQuote, quoteVars, ensureSignToken, pdfFor, pdfDir, defaultObject, readLogo };

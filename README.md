@@ -6,21 +6,18 @@ Chaque entreprise installe sa propre copie sur son serveur, puis règle dans le 
 
 ## Ce que fait le CRM
 
-- **Connexion** avec Google, réservée au domaine de l'entreprise. En secours, un code à 6 chiffres envoyé par mail.
-- **Équipe** : trois rôles (gérant, accueil, animation), des invitations, la désactivation d'un compte. Chaque action est signée du nom de la personne.
-- **Demandes** venues du site (formulaire intégré ou API) ou saisies dans le CRM (téléphone, accueil, salon), avec un tableau par étape : Nouvelle demande, À rappeler, Devis envoyé, Signature demandée, Signé, Acompte payé, Payé, Perdu.
-- **Contacts et entreprises** sans doublon (même mail ou même téléphone), avec import Excel ou CSV et aperçu avant import.
-- **Catalogue** avec des règles de prix : par personne, forfait, option, sur devis, minimum et maximum de personnes, TVA.
-- **Devis** prérempli depuis la demande, numérotation continue, PDF à la charte, envoi par mail avec un lien en ligne sans compte.
-- **Devis automatique** sur le site : le prix se calcule en direct, et le serveur le recalcule toujours à l'envoi.
-- **Signature électronique** : lien secret valable 30 jours, code par mail, signature au doigt, PDF signé avec une page de preuve et les empreintes SHA-256.
-- **Paiements Stripe** : acompte, solde, paiement libre, remboursement. Le paiement est créé côté serveur et le webhook est signé.
-- **Mails par Resend**, avec des modèles modifiables et le statut de chaque mail (délivré, ouvert, rejeté).
-- **Messages** : les mails des clients arrivent dans le CRM, rangés avec leur demande, et on y répond en un clic. Une réponse du client arrête ses relances.
-- **Relances** : devis non signé, acompte non payé, avis Google après la venue, demande sans réponse. Elles s'arrêtent dès que le client signe, paie ou répond. Une horloge de test permet de les voir partir.
-- **Tableau de bord** : visites du site (Google Analytics 4), demandes, devis, chiffre d'affaires signé et encaissé.
-- **Agenda** synchronisé avec Google Agenda.
-- **MCP et API** : avec un jeton personnel, Claude (MCP) ou un autre outil (API) se branche au CRM, avec les droits de la personne. Les actions sensibles restent à confirmer dans le CRM.
+Un CRM d'automatisation commerciale **B2B** : le client remplit un formulaire, reçoit son devis, le valide, paie l'acompte, et tout se suit dans le CRM.
+
+- **Connexion** par adresse mail et mot de passe. Le gérant crée les comptes de l'équipe (prénom, nom, mail, mot de passe) ; tout le monde a tous les droits. Google reste une option (désactivée par défaut).
+- **Accueil** : 3 chiffres (demandes reçues, devis signés, taux de signature), cette semaine (du lundi au dimanche) ou ce mois-ci.
+- **Devis** : demandes et devis sur une seule page, en liste ou en Kanban, avec le montant de chaque colonne. Les étapes : Demande, Devis envoyé, Relance email, Relance téléphonique, Signé, Acompte payé, Réalisé, Soldé. Un post-it par demande.
+- **Nouveau devis manuel** : les activités du catalogue, les prix HT et TTC, l'acompte fixe ou en %, avec ou sans lien de paiement. En option, la fiche entreprise remplie depuis la base Sirene de l'INSEE.
+- **Formulaire du site** (devis automatique) : 4 étapes avec une jauge, « Recevoir mon devis », le devis reçu tout de suite.
+- **Une page pour le client** : le devis à gauche ; à droite, 1. je valide (prénom, nom, entreprise, poste, « bon pour accord » écrit), 2. je paie l'acompte ; le contact de l'établissement avec sa photo, et la plaquette. PDF validé avec une page de preuve et les empreintes SHA-256.
+- **Paiements en tiroirs** : virement classique (le gérant passe le devis en « Acompte payé » après avoir vérifié sa banque), Stripe (carte, et virement vers un IBAN propre au client que Stripe suit ; le webhook passe le devis en « Acompte payé » avec le montant), Pennylane (module à part). Export comptable en CSV.
+- **Mails auto** (Resend) : envoi du devis (avec le lien de la plaquette dans le texte), 2 relances de signature, 2 relances d'acompte, merci à M+3, « il y a un an » à M+12. Chacun : actif ou non, délai, texte modifiable, envoi de test. Tout s'arrête dès que le client valide, paie ou répond.
+- **Paramètres** : identité et mentions légales du devis, numérotation (qui peut reprendre à un numéro choisi), acompte par défaut, moyens de paiement, logo et couleurs.
+- **Pour aller plus loin** (montré, pas au programme) : messages reçus, contacts, liste des paiements, agenda, MCP et API pour brancher Claude ou d'autres outils.
 - **RGPD** : export et suppression des données d'un contact, purge automatique après 3 ans sans activité (durée réglable).
 
 Côté technique : Node.js 22 ou plus récent, et la base SQLite intégrée à Node. Le CRM n'a **aucune dépendance**, donc pas de `npm install` et presque rien à mettre à jour.
@@ -93,15 +90,17 @@ Le script peut être relancé sans risque : il garde le `.env` et la base exista
 
 Si nginx sert déjà un site sur le serveur (un WordPress, par exemple), le script s'en sert au lieu d'installer Caddy. Il ajoute alors le CRM comme un site de plus, avec son propre certificat (certbot), sans toucher aux autres sites.
 
-### 5. La première connexion et l'assistant de démarrage
+### 5. La première connexion
 
-Ouvrez `https://crm.mon-entreprise.fr` et connectez-vous avec l'adresse du gérant, par code. Tant que Resend n'est pas branché, le code apparaît dans les journaux du serveur :
+À la fin de `install.sh`, le **mot de passe provisoire** du gérant s'affiche (une seule fois). Ouvrez `https://crm.mon-entreprise.fr`, connectez-vous avec l'adresse du gérant et ce mot de passe, puis changez-le dans **Mon compte**.
+
+Mot de passe perdu par le gérant ? Sur le serveur :
 
 ```bash
-journalctl -u crm-toog -n 30
+sudo -u crm node --disable-warning=ExperimentalWarning /opt/crm-toog/scripts/admin.js gerant@mon-entreprise.fr "Prénom Nom"
 ```
 
-L'**assistant de démarrage** s'ouvre et règle cinq choses : le nom et le logo, les couleurs (le contraste est vérifié), le domaine autorisé, l'acompte et la TVA, et les prix. Tout se modifie ensuite dans **Paramètres**.
+Puis remplissez **Paramètres** : identité et mentions légales, devis (numérotation, acompte), paiements, logo et couleurs. Ajoutez l'équipe dans **Équipe**.
 
 ### 6. Les intégrations, une à une
 
@@ -270,7 +269,8 @@ npm test                 # tests automatiques (parcours complet sur une base jet
   - `db.js` : la base et ses migrations ;
   - `auth.js` : la connexion ;
   - `deals.js`, `quotes.js`, `pdf.js` et `sign.js` : les demandes, les devis, les PDF et la signature ;
-  - `payments.js` : Stripe ;
+  - `payments.js` : Stripe, virement et export comptable ;
+  - `sirene.js` : la fiche entreprise depuis la base Sirene ;
   - `mail.js` : Resend ;
   - `reminders.js` : les relances ;
   - `analytics.js`, `calendar.js` et `google.js` : Analytics, l'agenda et le compte de service ;

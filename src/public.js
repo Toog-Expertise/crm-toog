@@ -42,7 +42,7 @@ async function guard(req) {
   if (b.website || (b.ts && Date.now() - Number(b.ts) < 2500)) return false;
   if (!(await verifyTurnstile(b['cf-turnstile-response'], ip))) throw new HttpError(400, 'Vérification anti-spam échouée : rechargez la page et réessayez.');
   if (!b.consent) throw new HttpError(400, 'Merci de cocher le consentement.');
-  if (!String(b.name || '').trim()) throw new HttpError(400, 'Indiquez votre nom.');
+  if (!String(b.name || '').trim() && !String(b.first_name || b.last_name || '').trim()) throw new HttpError(400, 'Indiquez votre nom.');
   if (!isEmail(b.email)) throw new HttpError(400, 'Adresse mail invalide.');
   // Pas plus de 3 envois par heure vers une même adresse (le formulaire n'est pas un relais de mails)
   if (!rate.hit('dest:' + String(b.email).trim().toLowerCase(), 3, 3600e3)) throw new HttpError(429, 'Plusieurs demandes viennent déjà d’être envoyées pour cette adresse. Réessayez plus tard.');
@@ -73,7 +73,7 @@ async function notify(dealId, { ack = true } = {}) {
 
 function formInput(b, source) {
   return {
-    type: b.type, name: b.name, email: b.email, phone: b.phone, event_at: b.event_at, people: b.people,
+    type: b.type, name: b.name, first_name: b.first_name, last_name: b.last_name, email: b.email, phone: b.phone, event_at: b.event_at, people: b.people,
     message: b.message, consent: Boolean(b.consent), data: b.data || {}, company: b.company,
     source, source_page: String(b.page || '').slice(0, 200) || null,
   };
@@ -133,7 +133,15 @@ window.addEventListener('message',function(e){if(e.origin!==${JSON.stringify(new
   });
 
   // --- Devis automatique ---
-  router.get('/api/public/catalogue', (req, res) => json(res, pricing.publicCatalog()));
+  router.get('/api/public/catalogue', (req, res) => json(res, { ...pricing.publicCatalog(), sirene: Boolean(settings.get('integrations').sirene) }));
+
+  // Recherche d'entreprise du formulaire (option, comme Privacy Escape) : nom ou SIRET -> fiche Sirene
+  router.get('/api/public/sirene', async (req, res) => {
+    if (!settings.get('integrations').sirene) throw new HttpError(404, 'Recherche indisponible.');
+    if (!rate.hit('sirene:' + clientIp(req), 30, 60e3)) throw new HttpError(429, 'Trop de recherches : patientez un instant.');
+    const list = await require('./sirene').search(req.query.get('q'));
+    json(res, list.slice(0, 5).map(({ name, siren, siret, address, active }) => ({ name, siren, siret, address, active })));
+  });
 
   router.get('/devis-auto', (req, res) => {
     const cat = pricing.publicCatalog();
@@ -155,15 +163,16 @@ window.addEventListener('message',function(e){if(e.origin!==${JSON.stringify(new
     // Type de la demande : celui de l'activité (« autre » si elle en couvre plusieurs). Le client n'a pas vu
     // les questions propres au type : elles ne sont pas exigées ici.
     const types = String(calc.product.deal_types || '').split(',').map((t) => t.trim()).filter(Boolean);
-    const type = types.length === 1 ? types[0] : types.includes('autre') || !types.length ? 'autre' : types[0];
-    const r = deals.createDeal({ ...formInput(b, 'devis_auto'), type, people: calc.people, title: `${calc.product.name} · ${calc.people} pers.`, data: { options: b.options || [] }, lenient: true });
+    const known = settings.dealTypes().map((t) => t.key);
+    const type = known.includes(b.type) ? b.type : types.find((t) => known.includes(t)) || 'entreprise';
+    const r = deals.createDeal({ ...formInput(b, 'devis_auto'), company_siret: b.company_siret, company_address: b.company_address, type, people: calc.people, title: `${calc.product.name} · ${calc.people} pers.`, product_id: calc.product.id, data: { options: b.options || [], societe: String(b.company || '').slice(0, 200), poste: String(b.role || '').slice(0, 120) }, lenient: true });
     const q = quotes.createQuote(r.id, null, calc.lines);
     const sent = await quotes.sendQuote(q.id, null, 'devis');
     await notify(r.id, { ack: false });
     const fresh = quotes.getQuote(q.id);
     json(res, {
       ok: true, number: fresh.number, total: money(fresh.total_ttc), total_cents: fresh.total_ttc,
-      deposit: money(fresh.deposit_cents), deposit_pct: fresh.deposit_pct, notes: calc.notes,
+      deposit: money(fresh.deposit_cents), deposit_cents: fresh.deposit_cents, deposit_pct: fresh.deposit_pct, notes: calc.notes,
       sign_url: `/s/${fresh.sign_token}`, pdf_url: `/s/${fresh.sign_token}/pdf`, mail: sent.mail.status,
     });
   });
@@ -179,6 +188,18 @@ window.addEventListener('message',function(e){if(e.origin!==${JSON.stringify(new
     }
     if (['paid', 'partially_refunded'].includes(p.status)) return html(res, pages.message('Déjà réglé', 'Ce paiement est déjà réglé. Merci !', { extra: amount }));
     if (req.query.get('annule')) return html(res, pages.message('Paiement annulé', "Le paiement n'a pas été effectué.", { extra: `${amount}<a class="btn btn-primary btn-block" href="/p/${escapeHtml(p.pay_token)}">Réessayer</a>` }));
+    if (!['pending', 'failed'].includes(p.status)) return html(res, pages.message('Lien expiré', "Ce lien de paiement n'est plus valable.", { extra: amount }), 410);
+    // RIB classique proposé : le client choisit (Stripe ou virement) ; sans Stripe, la page donne directement l'IBAN
+    const q = p.quote_id ? db.get('SELECT * FROM quotes WHERE id = ?', p.quote_id) : null;
+    const ways = q ? payments.quoteMethods(q) : ['rib', 'stripe'].filter((k) => payments.methods()[k]);
+    if (ways.includes('rib') && !req.query.get('carte')) {
+      const pm = payments.methods().pm;
+      const ref = q ? q.number : `P${p.id}`;
+      const rows = [['Titulaire', pm.holder], ['IBAN', quotes.formatIban(pm.iban)], ['BIC', pm.bic], ['Montant', money(p.amount_cents)], ['Référence', ref]].filter(([, v]) => v);
+      const transfer = `<div class="pub-transfer"><h2>Par virement</h2><dl>${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl><p class="muted small">${escapeHtml(pm.transfer_note || '')} Votre réservation est confirmée dès réception du virement.</p></div>`;
+      const card = ways.includes('stripe') ? `<a class="btn btn-primary btn-block" href="/p/${escapeHtml(p.pay_token)}?carte=1">Payer en ligne</a><p class="muted small" style="text-align:center">Paiement sécurisé par Stripe</p><p class="pub-or">ou</p>` : '';
+      return html(res, pages.message('Votre paiement', ways.includes('stripe') ? 'Choisissez votre moyen de paiement.' : 'Le règlement se fait par virement.', { extra: `${amount}${card}${transfer}` }));
+    }
     try {
       const r = await payments.checkoutUrl(p.pay_token);
       if (r.done) return html(res, pages.message('Déjà réglé', 'Ce paiement est déjà réglé. Merci !', { extra: amount }));

@@ -19,13 +19,22 @@ function splitName(name) {
   return { first_name: parts[0], last_name: parts.slice(1).join(' ') };
 }
 
-function upsertCompany(name) {
+// extra : SIRET, adresse, code NAF (fiche Sirene) ; ne remplit que les champs encore vides
+function upsertCompany(name, extra = {}) {
   const n = String(name || '').trim();
   if (!n) return null;
-  const c = db.get('SELECT id FROM companies WHERE lower(name) = lower(?)', n);
-  if (c) return c.id;
+  const info = {};
+  if (/^\d{14}$/.test(String(extra.siret || '').replace(/\s/g, ''))) info.siret = String(extra.siret).replace(/\s/g, '');
+  if (extra.address) info.address = String(extra.address).slice(0, 300);
+  if (extra.naf) info.naf = String(extra.naf).slice(0, 10);
+  const c = (info.siret && db.get('SELECT * FROM companies WHERE siret = ?', info.siret)) || db.get('SELECT * FROM companies WHERE lower(name) = lower(?)', n);
   const now = settings.now();
-  return db.insert('companies', { name: n.slice(0, 200), created_at: now, updated_at: now });
+  if (c) {
+    const upd = Object.fromEntries(Object.entries(info).filter(([k]) => !c[k]));
+    if (Object.keys(upd).length) db.update('companies', c.id, { ...upd, updated_at: now });
+    return c.id;
+  }
+  return db.insert('companies', { name: n.slice(0, 200), ...info, created_at: now, updated_at: now });
 }
 
 // Crée ou complète un contact. Les champs déjà remplis ne sont jamais écrasés par un champ vide.
@@ -55,11 +64,12 @@ function upsertContact(input) {
   return { id, created: true };
 }
 
-function dealTitle(type, people) {
+// Titre : l'activité choisie (sinon le type), et le nombre de personnes
+function dealTitle(type, people, productId = null) {
+  const p = productId ? db.get('SELECT name FROM products WHERE id = ?', productId) : null;
   const t = settings.dealTypes().find((x) => x.key === type);
-  const typeLabel = t ? t.label : 'Demande';
-  const unit = type === 'anniversaire' ? 'enfants' : 'pers.';
-  return [typeLabel, people ? `${people} ${unit}` : null].filter(Boolean).join(' · ');
+  const label = p ? p.name : t ? t.label.replace(/\s*\(.*\)$/, '') : 'Demande';
+  return [label, people ? `${people} pers.` : null].filter(Boolean).join(' · ');
 }
 
 const SOURCE_LABEL = { site: 'site', devis_auto: 'devis automatique', telephone: 'téléphone', accueil: 'accueil', salon: 'salon', crm: 'CRM', import: 'import', api: 'API' };
@@ -67,7 +77,7 @@ const SOURCE_LABEL = { site: 'site', devis_auto: 'devis automatique', telephone:
 // Crée une demande complète (contact, entreprise, demande) à partir des champs du formulaire
 function createDeal(input, user = null) {
   const types = settings.dealTypes();
-  const type = types.some((t) => t.key === input.type) ? input.type : 'autre';
+  const type = types.some((t) => t.key === input.type) ? input.type : (types[0]?.key || 'entreprise');
   const typeDef = types.find((t) => t.key === type) || { fields: [] };
   const data = {};
   let companyName = input.company || '';
@@ -78,15 +88,18 @@ function createDeal(input, user = null) {
     if (f.company && v) companyName = String(v);
   }
   if (input.data?.options) data.options = [].concat(input.data.options).map(Number).filter(Boolean);
+  // Activité du catalogue choisie (formulaire du CRM, devis automatique)
+  const productId = Number(input.product_id ?? input.data?.product_id) || null;
+  if (productId && db.get('SELECT 1 FROM products WHERE id = ? AND is_option = 0', productId)) data.product_id = productId;
   if (!input.email && !input.phone) throw new HttpError(400, 'Un mail ou un téléphone est nécessaire.');
   const people = input.people ? Math.max(0, Math.min(10000, parseInt(input.people, 10) || 0)) || null : null;
   const eventAt = typeof input.event_at === 'number' ? input.event_at : parseLocalDateTime(input.event_at);
   const created = db.tx(() => {
-    const company_id = upsertCompany(companyName);
+    const company_id = upsertCompany(companyName, { siret: input.company_siret, address: input.company_address, naf: input.company_naf });
     const contact = upsertContact({ name: input.name, first_name: input.first_name, last_name: input.last_name, email: input.email, phone: input.phone, company_id, consent: input.consent, source: input.source });
     const now = settings.now();
     const id = db.insert('deals', {
-      contact_id: contact.id, company_id, type, title: (input.title || dealTitle(type, people)).slice(0, 200),
+      contact_id: contact.id, company_id, type, title: (input.title || dealTitle(type, people, data.product_id)).slice(0, 200),
       stage: input.stage || 'nouvelle', source: input.source || 'crm', source_page: input.source_page || null,
       event_at: eventAt, people, data: JSON.stringify(data), message: String(input.message || '').slice(0, 5000) || null,
       assigned_to: input.assigned_to || null, created_by: user?.id || null, created_at: now, updated_at: now,

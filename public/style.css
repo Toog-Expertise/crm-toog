@@ -63,7 +63,9 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,cu
 /* Badges d'étape */
 .badge{display:inline-block;border-radius:999px;padding:3px 11px;font-size:12.5px;font-weight:700;white-space:nowrap}
 .b-nouvelle{background:rgba(var(--secondary-rgb),.22);color:#ff9cf0}
-.b-a_rappeler{background:rgba(255,176,32,.18);color:#ffc04d}
+.b-a_rappeler,.b-relance_tel{background:rgba(255,176,32,.18);color:#ffc04d}
+.b-relance_email{background:rgba(var(--secondary-rgb,199,36,168),.22);color:#f2b8e6}
+.b-realise{background:rgba(var(--accent-rgb),.35);color:var(--text)}
 .b-devis_envoye{background:rgba(var(--primary-rgb),.3);color:#d6c8ff}
 .b-signature{background:rgba(var(--text-rgb),.16);color:var(--text)}
 .b-signe,.b-paid,.b-acompte{background:rgba(var(--accent-rgb),.18);color:var(--accent)}
@@ -103,6 +105,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,cu
 .g3{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
 .g3-wide{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}
+@media (min-width:1100px){.kpis.k4{grid-template-columns:repeat(4,1fr)}}
 .kpi{background:var(--card);border-radius:14px;padding:16px 18px}
 .kpi b{display:block;font-family:var(--font-title);font-size:30px;color:var(--accent);line-height:1.1}
 .kpi span{font-size:13.5px;color:rgba(var(--text-rgb),.85)}
@@ -168,7 +171,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,cu
 .list-row small{display:block;color:rgba(var(--text-rgb),.65)}
 .cols-pay{grid-template-columns:2fr 1fr 1fr 1.2fr 1.4fr}
 .cols-rem{grid-template-columns:1.6fr 1.8fr 1fr .7fr 1.6fr}
-.cols-quotes{grid-template-columns:1fr 2fr 1fr 1fr 1.4fr}
+.cols-quotes{grid-template-columns:1fr 2fr 1fr 1fr 1.4fr 1.3fr}
 .cols-contacts{grid-template-columns:2fr 2fr 1.4fr 1.2fr .6fr}
 .cols-team{grid-template-columns:2fr 1.2fr 1.6fr 1fr}
 .cols-cat{grid-template-columns:2.2fr 1.3fr 1fr .8fr 1.2fr .8fr}
@@ -282,6 +285,135 @@ table.simple th,table.simple td{text-align:left;padding:7px 8px;border-bottom:1p
 .reply textarea{min-height:110px}
 
 /* Téléphone */
+/* 1.2 : accueil en direct, suivi des relances, Sirene, virement */
+.live-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:1px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+.live .row small{font-weight:400}
+.dcard .follow{display:block;margin-top:4px;opacity:.7;font-size:11.5px}
+.follow-table{margin-top:10px;display:grid;gap:6px}
+.fr{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:start;padding:8px 10px;border-radius:10px;background:rgba(var(--text-rgb),.04);font-size:13px}
+.fr small{display:block;opacity:.75}
+.fr.sent{border-left:3px solid var(--accent)}
+.fr.scheduled{border-left:3px solid var(--secondary)}
+.fr.paused,.fr.error{border-left:3px solid #ffb020}
+.fr-ch{text-align:center}
+.sirene-res{margin:-6px 0 12px;display:grid;gap:6px}
+.sirene-hit{display:block;text-align:left;width:100%;background:rgba(var(--text-rgb),.05);border:1px solid rgba(var(--text-rgb),.12);color:inherit;border-radius:10px;padding:8px 10px;cursor:pointer;font:inherit}
+.sirene-hit:hover,.sirene-hit:focus{border-color:var(--primary)}
+.sirene-hit small{display:block;opacity:.75;font-size:12px}
+.pub-transfer{border:1px solid rgba(var(--text-rgb),.18);border-radius:14px;padding:14px 16px;margin:14px 0;text-align:left}
+.pub-transfer h2{font-size:16px;margin:0 0 10px}
+.pub-transfer dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 10px}
+.pub-transfer dt{opacity:.7;font-size:13px}
+.pub-transfer dd{margin:0;font-weight:700;overflow-wrap:anywhere}
+.pub-or{text-align:center;opacity:.6;margin:6px 0}
+
+/* L'organisme trouvé dans Sirene (formulaire du site) */
+.sir-card{border:1px solid var(--accent);background:rgba(var(--accent-rgb),.08);border-radius:12px;padding:12px 14px;margin:-4px 0 14px;display:flex;flex-direction:column;gap:2px;font-size:14px}
+.sir-card small{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.dep-ask{display:flex;justify-content:flex-end;gap:12px;align-items:center;margin-top:8px}.dep-ask .label{margin:0}
+/* Jauge du devis en ligne (« Étape 2 sur 4 ») */
+.gauge{display:block;height:8px;border-radius:99px;background:rgba(var(--text-rgb),.12);overflow:hidden;margin:0 0 8px}
+.gauge i{display:block;height:100%;background:var(--grad);border-radius:99px;transition:width .3s}
+/* Mails auto (modèle du prototype du 28/10) */
+.parcours{margin-bottom:16px}.pc-g small{display:block;opacity:.7;margin:4px 0 8px}
+.pill-Signature,.pill-Acompte,.pill-Fidélisation{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px}
+.pill-Signature{background:rgba(var(--primary-rgb),.35);color:#e6dcff}.pill-Acompte{background:rgba(255,176,32,.2);color:#ffc04d}.pill-Fidélisation{background:rgba(var(--accent-rgb),.2);color:var(--accent)}
+.chip.off{opacity:.45;text-decoration:line-through}
+.mails2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:16px;align-items:start}
+.mlist{padding:8px}.mrow{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:start;padding:12px;border-radius:12px;text-decoration:none;color:inherit}
+.mrow:hover{background:rgba(var(--text-rgb),.05)}.mrow.on{background:rgba(var(--primary-rgb),.18)}
+.mn{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:rgba(var(--text-rgb),.1);font-weight:800;font-size:13px}
+.mt small{display:block;font-size:12.5px;opacity:.8;margin-top:3px}
+.mprev .mail-top{display:flex;justify-content:space-between;margin-bottom:10px}
+.vars .chip{font-family:ui-monospace,monospace;font-size:12px}
+.rule-stop{margin-top:14px;background:rgba(255,176,32,.12);border-radius:10px;padding:10px 12px;font-size:13px}
+@media (max-width:980px){.mails2{grid-template-columns:1fr}}
+/* Page Devis (modèle du prototype du 28/10) */
+.pipe-bar{justify-content:space-between;margin-bottom:14px;align-items:center}
+.row-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}.row-acts .act{font-size:12px}
+.tag-asso{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:99px;background:rgba(var(--secondary-rgb),.25);color:#ffb8ee;vertical-align:1px}
+.next-act small{display:block;opacity:.7}
+.dcard .dc-top{display:flex;justify-content:space-between;align-items:center;opacity:.75}
+.legend{margin-top:12px}
+/* 1.3 : menu, page Devis, nouveau devis, mails auto, tiroirs, page du client */
+.nav-more{margin-top:18px;font-size:13px}
+.nav-more summary{cursor:pointer;opacity:.6;padding:6px 14px;list-style:none;font-weight:700}
+.nav-more summary::-webkit-details-marker{display:none}
+.nav-more summary::before{content:'› ';}
+.nav-more[open] summary::before{content:'⌄ ';}
+.nav-more .nav a{font-weight:600;font-size:13px;padding:7px 14px;opacity:.8}
+.nav-bottom{margin-top:auto;padding-top:14px}
+.nav-bottom + .side-user{margin-top:14px}
+@media (min-width:900px){.kpis.k3{grid-template-columns:repeat(3,1fr)}}
+.seg{display:inline-flex;border:1px solid rgba(var(--text-rgb),.18);border-radius:99px;padding:3px;gap:3px}
+.seg button{background:none;border:0;color:inherit;font:inherit;font-weight:700;padding:7px 14px;border-radius:99px;cursor:pointer}
+.seg button.on{background:rgba(var(--primary-rgb),.55);color:#fff}
+.cols-pipe{grid-template-columns:1.05fr 2fr .75fr 1fr 1.15fr 1.05fr 1.45fr}
+.cols-pipe small{display:block}
+.postit{background:#fff3a8;color:#3b3200;border-radius:8px;padding:10px 14px;margin:0 0 16px;cursor:pointer;font-size:14px;box-shadow:0 2px 0 rgba(0,0,0,.12);max-width:720px}
+.postit .muted{color:#6b5f1a;opacity:1}
+.postit-mini,.list-row small.postit-mini{display:block;background:#fff3a8;color:#3b3200;border-radius:6px;padding:3px 7px;margin:4px 0;font-size:12px;line-height:1.35}
+.nq-line{display:grid;grid-template-columns:1fr 70px 110px;gap:8px;margin-bottom:8px;align-items:center}
+.nq-line small{grid-column:1/-1;margin-top:-4px}
+.nq-tot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:rgba(var(--primary-rgb),.12);margin:4px 0 14px;font-size:14px}
+.nq-tot:empty{display:none}
+.nq-dep{display:grid;grid-template-columns:auto 1fr;gap:8px}
+.mails{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.mail-card .mail-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
+.mail-card .mail-top small{display:block;margin-top:3px}
+.mail-card.off{opacity:.6}
+.field.inline{flex-direction:row;align-items:center;gap:10px}
+.field.inline>span{margin:0}
+.field.inline input{width:90px}
+.drawer.off{opacity:.6}
+.contact-photo{width:84px;height:84px;border-radius:50%;object-fit:cover;display:block;margin:6px 0 12px}
+/* Page du client : le devis à gauche, les étapes à droite */
+main.sg{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:28px;max-width:1180px;margin:0 auto;padding:32px 20px 60px}
+.sg-left .sg-doc{background:#fff;color:#1d1b29;border-radius:16px;padding:28px;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.sg-doc .label{color:var(--primary)}
+.sg-doc-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}
+.sg-doc-top img{max-width:120px;max-height:80px}
+.sg-doc-id{text-align:right}
+.sg-doc-id b{display:block;font-size:18px}
+.sg-doc-id span{font-size:13px;color:#6b6880}
+.sg-doc-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:13px;margin-bottom:12px}
+.sg-doc-2 p{margin:4px 0 0}
+.sg-obj{background:#f2f0f8;border-radius:8px;padding:10px 12px;font-size:14px}
+.sg-lines{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0}
+.sg-lines th{text-align:left;font-size:12px;color:#6b6880;border-bottom:2px solid #e6e3ef;padding:6px 4px}
+.sg-lines th:nth-child(n+2),.sg-lines td:nth-child(n+2){text-align:right;white-space:nowrap}
+.sg-lines td{border-bottom:1px solid #eeecf4;padding:8px 4px;vertical-align:top}
+.sg-lines small{display:block;color:#6b6880}
+.sg-tot{margin-left:auto;max-width:300px;font-size:14px}
+.sg-tot div{display:flex;justify-content:space-between;padding:3px 0}
+.sg-ttc{font-size:18px;border-top:2px solid #e6e3ef;margin-top:6px;padding-top:8px!important}
+.sg-ttc b{color:var(--primary)}
+.sg-dep b{color:#1d1b29}
+.sg-cond{font-size:12px;color:#6b6880;margin-top:16px}
+.sg-right h1{margin:0 0 16px}
+.sg-step{display:grid;grid-template-columns:34px 1fr;gap:12px;background:var(--card);border-radius:16px;padding:18px;margin-bottom:14px}
+.sg-step h2{font-size:17px;margin:4px 0 12px}
+.sg-step.off{opacity:.55}
+.sg-n{width:34px;height:34px;border-radius:50%;background:var(--grad);color:#fff;display:grid;place-items:center;font-weight:800}
+.sg-step.done .sg-n{background:var(--accent);color:#111}
+.sg-about{background:var(--card);border-radius:16px;padding:18px;font-size:14px}
+.sg-about h2{font-size:17px;margin:0 0 8px}
+.sg-points{list-style:none;padding:0;margin:8px 0 14px}.sg-points li{padding-left:22px;position:relative;margin:4px 0}.sg-points li::before{content:'✓';position:absolute;left:0;color:var(--accent);font-weight:800}
+.sg-ini{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:var(--grad);color:#fff;font-weight:800;font-size:20px;flex:none}
+.sg-contact{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+.sg-contact img{width:56px;height:56px;border-radius:50%;object-fit:cover}
+.sg-contact span{display:block;font-size:13px;opacity:.85}
+.sg-contact a{color:var(--accent)}
+.sg-mini{display:none}
+@media (max-width:860px){main.sg{grid-template-columns:1fr;padding:16px}.sg-right{order:-1}.sg-doc-2{grid-template-columns:1fr}
+  .sg-mini{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;background:var(--card);border-radius:14px;padding:12px 14px;margin:-6px 0 14px;text-decoration:none;color:inherit;font-size:14px}
+  .sg-mini b{font-size:18px;color:var(--accent)}.sg-mini u{font-size:13px;opacity:.8}
+  .sg-step{grid-template-columns:28px 1fr;gap:10px;padding:14px}.sg-n{width:28px;height:28px;font-size:14px}
+  .sg-left .sg-doc{padding:18px}.sg-lines{font-size:13px}}
+
 @media (max-width:860px){
   h1{font-size:28px}
   .app{grid-template-columns:1fr}
@@ -311,3 +443,27 @@ table.simple th,table.simple td{text-align:left;padding:7px 8px;border-bottom:1p
   .head-actions input,.head-actions select{min-width:0;width:100%}
 }
 @media (min-width:861px){.mobile-top{display:none}}
+
+/* Téléphone : page Devis, chiffres, pastilles, mails auto (1.3) */
+a.chip{text-decoration:none}
+@media (min-width:861px){.head-actions input#q{max-width:240px}}
+@media (max-width:860px){
+  .head .label{font-size:11px;letter-spacing:.08em}
+  .kpis.k3{grid-template-columns:repeat(3,1fr);gap:8px}
+  .kpis.k3 .kpi{padding:12px 10px}.kpis.k3 .kpi b{font-size:24px}.kpis.k3 .kpi span{font-size:11.5px;line-height:1.3}
+  .head-actions{width:100%}.head-actions>*{flex:1 1 auto}.head-actions>select,.head-actions>input{flex-basis:100%}
+  .pipe-bar{flex-direction:column;align-items:stretch;gap:10px}
+  .pipe-bar>*{min-width:0;max-width:100%}
+  .pipe-bar .chips{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none}
+  .pipe-bar .chips .chip{white-space:nowrap;flex:none}
+  .pipe-bar>.actions{justify-content:space-between}
+  /* Une ligne de devis devient une carte lisible */
+  .list-row.cols-pipe{grid-template-columns:1fr auto!important;grid-template-areas:"ref date" "who who" "amt st" "pay next";row-gap:10px}
+  .cols-pipe>:nth-child(1){grid-area:ref}.cols-pipe>:nth-child(2){grid-area:who}.cols-pipe>:nth-child(3){grid-area:date;text-align:right}
+  .cols-pipe>:nth-child(4){grid-area:amt}.cols-pipe>:nth-child(5){grid-area:st;text-align:right}.cols-pipe>:nth-child(6){grid-area:pay}.cols-pipe>:nth-child(7){grid-area:next;text-align:right}
+  .cols-pipe .row-acts{display:inline-flex;margin:0 0 0 10px}
+  .parcours{display:none}
+  .mrow{grid-template-columns:24px 1fr auto;padding:10px 6px}
+  .nq-line{grid-template-columns:1fr 60px 90px}
+  .seg button{padding:7px 12px}
+}

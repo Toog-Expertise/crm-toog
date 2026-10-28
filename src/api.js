@@ -19,6 +19,7 @@ const rgpd = require('./rgpd');
 const stats = require('./stats');
 const inbox = require('./inbox');
 const google = require('./google');
+const sirene = require('./sirene');
 const { config } = require('./env');
 const { json, send, PDF_CSP } = require('./http');
 const { sha256, randomToken, money, fullName, normEmail, normPhone, isEmail, HttpError, parseLocalDateTime } = require('./util');
@@ -30,9 +31,14 @@ const cents = (euros) => (euros === '' || euros === null || euros === undefined 
 
 function userName(id) { return id ? db.get('SELECT name FROM users WHERE id = ?', id)?.name || '' : ''; }
 
-function dealRow(d) {
-  const q = db.get("SELECT id, number, status, total_ttc FROM quotes WHERE deal_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1", d.id);
+function dealRow(d, follow = {}) {
+  const q = db.get("SELECT * FROM quotes WHERE deal_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1", d.id);
+  const paid = q ? db.get("SELECT COALESCE(SUM(amount_cents - refunded_cents), 0) s FROM payments WHERE quote_id = ? AND status IN ('paid', 'partially_refunded')", q.id).s : 0;
+  const lastPaid = q ? db.get("SELECT method FROM payments WHERE quote_id = ? AND status IN ('paid', 'partially_refunded') ORDER BY paid_at DESC LIMIT 1", q.id) : null;
   return {
+    followup: follow[d.id] || null, postit: d.postit || null, asso: d.type === 'association',
+    quote_detail: q ? { number: q.number, sent_at: q.sent_at, signed_at: q.signed_at, viewed_at: q.viewed_at, deposit: q.deposit_cents, paid, ht: q.total_ht,
+      methods: payments.quoteMethods(q), paid_method: lastPaid?.method || null, link: q.sign_token && q.status !== 'draft' ? `${config.appUrl}/s/${q.sign_token}` : null } : null,
     id: d.id, title: d.title, type: d.type, stage: d.stage, source: d.source, event_at: d.event_at, people: d.people,
     contact: fullName(d), company: d.company_name || null, assigned_to: d.assigned_to, assigned_name: d.assigned_name || null,
     quote: q ? { id: q.id, number: q.number, status: q.status, total: q.total_ttc } : null, created_at: d.created_at, updated_at: d.updated_at,
@@ -44,13 +50,15 @@ function register(router) {
   router.get('/api/me', auth.requireUser, (req, res) => {
     const u = req.user;
     json(res, {
-      user: { id: u.id, email: u.email, name: u.name, role: u.role, role_label: settings.ROLES[u.role]?.label },
-      access: settings.ROLES[u.role]?.access || [],
+      user: { id: u.id, email: u.email, name: u.name, first_name: u.first_name, last_name: u.last_name },
+      access: settings.AREAS,
       company: { name: settings.get('company').name }, logo: Boolean(settings.get('logo')),
       stages: settings.STAGES, roles: Object.entries(settings.ROLES).map(([k, v]) => ({ key: k, label: v.label })),
       deal_types: settings.dealTypes(), setup_done: Boolean(settings.get('setup_done')), demo: Boolean(settings.get('demo')),
       clock_offset_ms: Number(settings.get('clock_offset_ms')) || 0, now: settings.now(),
-      stripe_mode: payments.stripeMode(), version: config.version,
+      stripe_mode: payments.stripeMode(), version: config.version, pay_methods: (({ rib, stripe }) => ({ rib, stripe }))(payments.methods()),
+      deposit: (({ deposit_mode, deposit_pct, deposit_fixed_cents }) => ({ deposit_mode, deposit_pct, deposit_fixed_cents }))(settings.get('quotes')),
+      sirene: Boolean(settings.get('integrations').sirene),
       users: db.all('SELECT id, name, role FROM users WHERE active = 1 ORDER BY name'),
       pending_actions: db.get("SELECT COUNT(*) n FROM pending_actions WHERE status = 'pending'").n,
       unread_messages: inbox.unread(), inbox_enabled: inbox.enabled(),
@@ -58,9 +66,15 @@ function register(router) {
   });
 
   router.get('/api/dashboard', area('accueil'), async (req, res) => {
-    const p = ['semaine', 'mois', 'annee'].includes(req.query.get('periode')) ? req.query.get('periode') : 'mois';
+    const p = ['semaine', 'mois'].includes(req.query.get('periode')) ? req.query.get('periode') : 'mois';
     json(res, await stats.dashboard(p, req.user));
   });
+
+  // L'accueil en direct : rechargé toutes les 30 secondes par l'écran
+  router.get('/api/dashboard/live', area('accueil'), (req, res) => json(res, { ...stats.live(), pipeline: stats.pipeline() }));
+
+  // Fiche entreprise depuis la base Sirene (nom, SIREN ou SIRET)
+  router.get('/api/sirene', area('demandes'), async (req, res) => json(res, await sirene.search(req.query.get('q'))));
 
   router.get('/api/search', area('demandes'), (req, res) => {
     const q = `%${(req.query.get('q') || '').trim()}%`;
@@ -72,6 +86,21 @@ function register(router) {
   });
 
   // --- Demandes ---
+  // Export des devis (CSV, point-virgule) : la liste telle qu'affichée
+  router.get('/api/deals/export.csv', area('devis'), (req, res) => {
+    const rows = db.all(`SELECT d.*, c.first_name, c.last_name, c.email, co.name company_name FROM deals d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN companies co ON co.id = d.company_id ORDER BY d.created_at DESC`);
+    const cell = (v) => { const t = String(v ?? ''); return /[";\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const eur = (c) => (c === null || c === undefined ? '' : (c / 100).toFixed(2).replace('.', ','));
+    const day = (ts) => (ts ? new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris' }).format(ts) : '');
+    const out = [['Réf.', 'Client', 'Contact', 'Mail', 'Demande', 'Date de l’événement', 'Étape', 'Montant HT (€)', 'Montant TTC (€)', 'Acompte (€)', 'Encaissé (€)', 'Envoyé le', 'Signé le', 'Post-it']];
+    for (const d of rows) {
+      const r = dealRow(d);
+      const q = r.quote_detail;
+      out.push([q?.number || '', d.company_name || '', fullName(d), d.email || '', d.title, day(d.event_at), settings.stageLabel(d.stage), eur(q?.ht), eur(r.quote?.total), eur(q?.deposit), eur(q?.paid), day(q?.sent_at), day(q?.signed_at), d.postit || '']);
+    }
+    send(res, 200, '\ufeff' + out.map((l) => l.map(cell).join(';')).join('\r\n') + '\r\n', 'text/csv; charset=utf-8', { 'Content-Disposition': 'attachment; filename="devis.csv"', 'Cache-Control': 'no-store' });
+  });
+
   router.get('/api/deals', area('demandes'), (req, res) => {
     const where = [], p = [];
     for (const [param, col] of [['source', 'd.source'], ['type', 'd.type'], ['stage', 'd.stage'], ['assigned', 'd.assigned_to']]) {
@@ -85,16 +114,9 @@ function register(router) {
     const rows = db.all(`SELECT d.*, c.first_name, c.last_name, c.email, co.name company_name, u.name assigned_name FROM deals d
       LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN companies co ON co.id = d.company_id LEFT JOIN users u ON u.id = d.assigned_to
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY d.updated_at DESC LIMIT 500`, ...p);
-    const now = settings.now(), week = now - 7 * 86400e3, month = stats.range('mois').from;
-    json(res, {
-      deals: rows.map(dealRow),
-      kpis: {
-        week: db.get('SELECT COUNT(*) n FROM deals WHERE created_at > ?', week).n,
-        sent: db.get("SELECT COUNT(*) n FROM quotes WHERE status = 'sent'").n,
-        signed: db.get('SELECT COUNT(*) n FROM quotes WHERE signed_at > ?', month).n,
-        signed_amount: db.get('SELECT COALESCE(SUM(total_ttc), 0) s FROM quotes WHERE signed_at > ?', month).s,
-      },
-    });
+    const follow = reminders.followup(rows.map((r) => r.id));
+    const period = ['semaine', 'mois'].includes(req.query.get('periode')) ? req.query.get('periode') : 'mois';
+    json(res, { deals: rows.map((r) => dealRow(r, follow)), kpis: stats.kpis(period) });
   });
 
   router.post('/api/deals', area('demandes'), (req, res) => {
@@ -111,13 +133,17 @@ function register(router) {
     json(res, {
       deal: { ...d, data: pricing.safeJson(d.data), assigned_name: userName(d.assigned_to) },
       contact: c, company: d.company_id ? db.get('SELECT * FROM companies WHERE id = ?', d.company_id) : null,
+      product: pricing.safeJson(d.data).product_id ? db.get('SELECT id, name FROM products WHERE id = ?', Number(pricing.safeJson(d.data).product_id)) : null,
       activities: db.all('SELECT a.*, u.name user_name FROM activities a LEFT JOIN users u ON u.id = a.user_id WHERE a.deal_id = ? ORDER BY a.created_at DESC, a.id DESC LIMIT 200', d.id),
       tasks: db.all('SELECT t.*, u.name assigned_name FROM tasks t LEFT JOIN users u ON u.id = t.assigned_to WHERE t.deal_id = ? ORDER BY t.done_at IS NOT NULL, t.due_at', d.id),
       quotes: db.all('SELECT id, number, status, total_ttc, deposit_cents, sent_at, signed_at, viewed_at, sign_token FROM quotes WHERE deal_id = ? ORDER BY id DESC', d.id)
         .map(({ sign_token, ...q }) => ({ ...q, sign_url: sign_token && q.status !== 'draft' ? `${config.appUrl}/s/${sign_token}` : null })),
-      payments: db.all('SELECT id, kind, label, amount_cents, refunded_cents, status, created_at, paid_at, pay_token FROM payments WHERE deal_id = ? ORDER BY id DESC', d.id)
+      payments: db.all('SELECT id, kind, label, amount_cents, refunded_cents, status, method, created_at, paid_at, pay_token FROM payments WHERE deal_id = ? ORDER BY id DESC', d.id)
         .map(({ pay_token, ...p }) => ({ ...p, link: p.status === 'pending' ? `${config.appUrl}/p/${pay_token}` : null })),
       reminders: db.all("SELECT * FROM reminders WHERE deal_id = ? AND status IN ('scheduled', 'paused', 'error') ORDER BY due_at", d.id),
+      // Suivi des relances : mails (automatiques et manuels) et appels, faits et prévus
+      followup: db.all("SELECT r.id, r.rule, r.channel, r.label, r.message, r.status, r.due_at, r.sent_at, r.error, u.name user_name FROM reminders r LEFT JOIN users u ON u.id = r.created_by WHERE r.deal_id = ? AND r.rule IN ('quote_unsigned', 'deposit_unpaid', 'manual', 'call_log', 'thanks', 'one_year') AND r.status != 'cancelled' ORDER BY COALESCE(r.sent_at, r.due_at)", d.id),
+      pay_methods_quote: null,
       emails: db.all('SELECT id, to_addr, template, subject, status, error, created_at, updated_at FROM emails WHERE deal_id = ? ORDER BY id DESC', d.id),
       events: db.all("SELECT * FROM events WHERE deal_id = ? AND status = 'confirmed'", d.id),
     });
@@ -152,12 +178,41 @@ function register(router) {
     json(res, { ok: true });
   });
 
-  router.post('/api/deals/:id/stage', area('demandes'), (req, res) => {
+  router.post('/api/deals/:id/stage', area('demandes'), async (req, res) => {
+    // Tiroir RIB : passer à « Acompte payé » enregistre l'acompte reçu par virement (après vérification de la banque)
+    if (req.body.stage === 'acompte') {
+      const q = db.get("SELECT * FROM quotes WHERE deal_id = ? AND status = 'signed' ORDER BY signed_at DESC LIMIT 1", Number(req.params.id));
+      const dep = q && q.deposit_cents > 0 ? payments.depositFor(q) : null;
+      if (dep) await payments.markReceived(dep.id, { method: 'virement' }, req.user);
+    }
     const d = deals.setStage(req.params.id, req.body.stage, req.user, req.body.note || '');
     if (req.body.stage === 'perdu' && req.body.note) db.update('deals', d.id, { lost_reason: String(req.body.note).slice(0, 300) });
     deals.claim(d.id, req.user);
     calendar.onDealChanged(d.id).catch(() => {});
     json(res, { ok: true, stage: d.stage });
+  });
+
+  // Post-it : la demande du client en deux mots, visible dans la liste et le Kanban
+  router.put('/api/deals/:id/postit', area('demandes'), (req, res) => {
+    const d = deals.getDeal(req.params.id);
+    db.update('deals', d.id, { postit: String(req.body.text || '').trim().slice(0, 500) || null, updated_at: settings.now() });
+    json(res, { ok: true });
+  });
+
+  // Nouveau devis manuel : le client, les activités du catalogue, l'acompte (fixe ou %), avec ou sans lien de paiement
+  router.post('/api/quotes/manual', area('devis'), (req, res) => {
+    const b = req.body;
+    const lines = (Array.isArray(b.lines) ? b.lines : []).map((l) => {
+      const p = l.product_id ? db.get('SELECT * FROM products WHERE id = ?', Number(l.product_id)) : null;
+      return { product_id: p?.id || null, label: String(l.label || p?.name || '').slice(0, 300), description: p?.description || '', qty: Number(l.qty) || 1, unit_cents: l.unit_cents ?? cents(l.unit) ?? p?.price_cents ?? 0, vat_rate: l.vat_rate ?? p?.vat_rate ?? settings.get('quotes').default_vat };
+    }).filter((l) => l.label);
+    if (!lines.length) throw new HttpError(400, 'Ajoutez au moins une activité.');
+    const r = deals.createDeal({ type: b.type, first_name: b.first_name, last_name: b.last_name, email: b.email, phone: b.phone, company: b.company, data: { societe: b.company, poste: b.role }, people: b.people, event_at: b.event_at, message: b.postit, source: ['telephone', 'accueil', 'salon', 'crm', 'site'].includes(b.source) ? b.source : 'crm', company_siret: b.company_siret, company_address: b.company_address, company_naf: b.company_naf, assigned_to: req.user.id }, req.user);
+    if (b.postit) db.update('deals', r.id, { postit: String(b.postit).slice(0, 500) });
+    const deposit = b.deposit_mode === 'fixe' ? { fixed: cents(b.deposit_value) || 0 } : { pct: Number(String(b.deposit_value ?? settings.get('quotes').deposit_pct).replace(',', '.')) || 0 };
+    const methods = b.payment_link === false ? [] : Array.isArray(b.pay_methods) ? b.pay_methods.filter((k) => ['rib', 'stripe'].includes(k)) : null;
+    const q = quotes.createQuote(r.id, req.user, lines, { deposit, payMethods: methods });
+    json(res, { id: q.id, deal_id: r.id }, 201);
   });
 
   router.post('/api/deals/:id/note', area('demandes'), (req, res) => {
@@ -167,6 +222,12 @@ function register(router) {
     activity.log({ deal_id: d.id, user_id: req.user.id, kind: req.body.kind === 'call' ? 'call' : 'note', text: `${req.body.kind === 'call' ? 'Appel' : 'Note'} de ${req.user.name} : ${text.slice(0, 3000)}` });
     deals.claim(d.id, req.user);
     json(res, { ok: true });
+  });
+
+  // Relance téléphonique notée à la main
+  router.post('/api/deals/:id/calls', area('demandes'), (req, res) => {
+    const d = deals.getDeal(req.params.id);
+    json(res, reminders.logCall(d.id, { outcome: req.body.outcome, note: req.body.note, replied: req.body.replied === true }, req.user), 201);
   });
 
   router.post('/api/deals/:id/replied', area('demandes'), (req, res) => {
@@ -314,7 +375,9 @@ function register(router) {
     const co = db.get('SELECT * FROM companies WHERE id = ?', Number(req.params.id));
     if (!co) throw new HttpError(404, 'Entreprise introuvable.');
     const upd = { updated_at: settings.now() };
-    for (const k of ['name', 'siret', 'address', 'phone', 'email']) if (req.body[k] !== undefined) upd[k] = String(req.body[k]).slice(0, 300);
+    for (const k of ['name', 'siret', 'address', 'phone', 'email', 'naf']) if (req.body[k] !== undefined) upd[k] = String(req.body[k]).slice(0, 300);
+    if (upd.siret) upd.siret = upd.siret.replace(/\s/g, '');
+    if (upd.siret && !/^\d{14}$/.test(upd.siret)) throw new HttpError(400, 'Le SIRET compte 14 chiffres.');
     db.update('companies', co.id, upd);
     json(res, { ok: true });
   });
@@ -334,6 +397,7 @@ function register(router) {
       name: name.slice(0, 200), description: String(b.description || '').slice(0, 500), pricing: pricingRule, is_option: b.is_option ? 1 : 0,
       price_cents: price, vat_rate: Number(String(b.vat_rate ?? settings.get('quotes').default_vat).replace(',', '.')) || 0,
       min_people: num(b.min_people), max_people: num(b.max_people),
+      deposit_pct: b.deposit_pct === '' || b.deposit_pct === undefined || b.deposit_pct === null ? null : Math.min(100, Math.max(0, Number(String(b.deposit_pct).replace(',', '.')) || 0)),
       deal_types: [].concat(b.deal_types || []).join(','), public: b.public ? 1 : 0, example: b.example ? 1 : 0,
       active: b.active === false ? 0 : 1, sort: num(b.sort) || 0, updated_at: settings.now(),
     };
@@ -349,9 +413,11 @@ function register(router) {
   router.post('/api/deals/:id/quotes', area('devis'), (req, res) => json(res, quotes.createQuote(req.params.id, req.user), 201));
   router.get('/api/quotes', area('devis'), (req, res) => {
     const st = req.query.get('status');
-    json(res, db.all(`SELECT q.id, q.number, q.status, q.total_ttc, q.deposit_cents, q.sent_at, q.signed_at, q.viewed_at, q.created_at, q.deal_id, d.title, c.first_name, c.last_name
-      FROM quotes q JOIN deals d ON d.id = q.deal_id LEFT JOIN contacts c ON c.id = d.contact_id ${st ? 'WHERE q.status = ?' : ''} ORDER BY q.id DESC LIMIT 300`, ...(st ? [st] : []))
-      .map((q) => ({ ...q, contact: fullName(q) })));
+    const rows = db.all(`SELECT q.id, q.number, q.status, q.total_ttc, q.deposit_cents, q.sent_at, q.signed_at, q.viewed_at, q.created_at, q.deal_id, d.title, c.first_name, c.last_name
+      FROM quotes q JOIN deals d ON d.id = q.deal_id LEFT JOIN contacts c ON c.id = d.contact_id ${st ? 'WHERE q.status = ?' : ''} ORDER BY q.id DESC LIMIT 300`, ...(st ? [st] : []));
+    // Colonne « Relances » : mails partis, appels notés, prochaine relance
+    const follow = reminders.followup(rows.map((q) => q.deal_id));
+    json(res, rows.map((q) => ({ ...q, contact: fullName(q), followup: follow[q.deal_id] || null })));
   });
   router.get('/api/quotes/:id', area('devis'), (req, res) => {
     const q = quotes.getQuote(req.params.id);
@@ -362,6 +428,7 @@ function register(router) {
       deal: { ...d, data: pricing.safeJson(d.data) }, contact: deals.contactOf(d),
       products: db.all('SELECT * FROM products WHERE active = 1 ORDER BY is_option, sort, id'),
       balance: payments.quoteBalance(q),
+      pay_methods: payments.quoteMethods(q),
     });
   });
   router.put('/api/quotes/:id', area('devis'), (req, res) => {
@@ -400,7 +467,18 @@ function register(router) {
         count_paid: db.get("SELECT COUNT(*) n FROM payments WHERE status IN ('paid', 'partially_refunded', 'refunded')").n,
       },
       stripe_mode: payments.stripeMode(), deposit_pct: settings.get('quotes').deposit_pct,
+      methods: { card: payments.methods().card, transfer: payments.methods().transfer, webhook: Boolean(config.stripe.webhookSecret) },
     });
+  });
+
+  // Export comptable (CSV, séparateur point-virgule, lisible par Excel et importable dans Pennylane ou un tableur)
+  router.get('/api/payments/export.csv', area('paiements'), (req, res) => {
+    send(res, 200, payments.exportCsv(), 'text/csv; charset=utf-8', { 'Content-Disposition': 'attachment; filename="paiements.csv"', 'Cache-Control': 'no-store' });
+  });
+
+  // Virement reçu, espèces, chèque : noté à la main
+  router.post('/api/payments/:id/received', area('paiements'), async (req, res) => {
+    json(res, await payments.markReceived(req.params.id, { method: req.body.method, amount_cents: cents(req.body.amount), paid_at: parseLocalDateTime(req.body.paid_at) }, req.user));
   });
 
   router.post('/api/payments', area('paiements'), async (req, res) => {
@@ -503,37 +581,44 @@ function register(router) {
     json(res, { ok: true });
   });
 
-  // --- Équipe ---
-  router.get('/api/users', area('equipe'), (req, res) => json(res, db.all('SELECT id, email, name, role, active, created_at, last_login_at, last_login_method FROM users ORDER BY active DESC, name')));
-  router.post('/api/users', area('equipe'), async (req, res) => {
+  // --- Équipe : prénom, nom, mail, mot de passe choisi par le gérant ; tout le monde a tous les droits ---
+  router.get('/api/users', area('equipe'), (req, res) => json(res, db.all('SELECT id, email, name, first_name, last_name, active, created_at, last_login_at, last_login_method, password_hash IS NOT NULL has_password FROM users ORDER BY active DESC, name')));
+  router.post('/api/users', area('equipe'), (req, res) => {
     const email = normEmail(req.body.email);
-    const domain = settings.allowedDomain();
-    if (!isEmail(email)) throw new HttpError(400, 'Adresse invalide.');
-    if (domain && email.split('@')[1] !== domain) throw new HttpError(400, `Seules les adresses @${domain} peuvent être invitées.`);
-    if (db.get('SELECT 1 FROM users WHERE email = ?', email)) throw new HttpError(409, 'Cette personne a déjà un compte.');
-    const role = settings.ROLES[req.body.role] ? req.body.role : 'accueil';
-    const id = db.insert('users', { email, name: String(req.body.name || email.split('@')[0]).slice(0, 100), role, invited_by: req.user.id, created_at: settings.now() });
-    const r = await mail.send({ to: email, template: 'invitation', vars: { invite_par: req.user.name, email, lien: `${config.appUrl}/login` } });
-    activity.log({ user_id: req.user.id, kind: 'system', text: `${email} invité(e) comme ${settings.ROLES[role].label} par ${req.user.name}` });
-    json(res, { id, mail: r.status }, 201);
+    if (!isEmail(email)) throw new HttpError(400, 'Adresse mail invalide.');
+    const first = String(req.body.first_name || '').trim().slice(0, 60), last = String(req.body.last_name || '').trim().slice(0, 60);
+    if (!first) throw new HttpError(400, 'Indiquez le prénom.');
+    if (db.get('SELECT 1 FROM users WHERE email = ?', email)) throw new HttpError(409, 'Cette adresse a déjà un compte.');
+    const pw = auth.validPassword(req.body.password);
+    const id = db.insert('users', { email, first_name: first, last_name: last, name: `${first} ${last}`.trim(), role: 'gerant', password_hash: auth.hashPassword(pw), invited_by: req.user.id, created_at: settings.now() });
+    activity.log({ user_id: req.user.id, kind: 'system', text: `Compte créé pour ${first} ${last} (${email}) par ${req.user.name}` });
+    json(res, { id }, 201);
   });
   router.put('/api/users/:id', area('equipe'), (req, res) => {
     const u = db.get('SELECT * FROM users WHERE id = ?', Number(req.params.id));
     if (!u) throw new HttpError(404, 'Compte introuvable.');
     const upd = {};
-    if (req.body.role && settings.ROLES[req.body.role]) upd.role = req.body.role;
     if (req.body.active !== undefined) upd.active = req.body.active ? 1 : 0;
-    if (req.body.name) upd.name = String(req.body.name).slice(0, 100);
-    const gerants = db.get("SELECT COUNT(*) n FROM users WHERE role = 'gerant' AND active = 1 AND id != ?", u.id).n;
-    if (u.role === 'gerant' && (upd.role && upd.role !== 'gerant' || upd.active === 0) && gerants === 0) throw new HttpError(400, 'Il faut garder au moins un gérant actif.');
+    if (req.body.first_name !== undefined) upd.first_name = String(req.body.first_name).trim().slice(0, 60);
+    if (req.body.last_name !== undefined) upd.last_name = String(req.body.last_name).trim().slice(0, 60);
+    if (upd.first_name !== undefined || upd.last_name !== undefined) upd.name = `${upd.first_name ?? u.first_name} ${upd.last_name ?? u.last_name}`.trim() || u.name;
+    if (req.body.email !== undefined) {
+      const e = normEmail(req.body.email);
+      if (!isEmail(e)) throw new HttpError(400, 'Adresse mail invalide.');
+      if (e !== u.email && db.get('SELECT 1 FROM users WHERE email = ?', e)) throw new HttpError(409, 'Cette adresse a déjà un compte.');
+      upd.email = e;
+    }
+    if (req.body.password) upd.password_hash = auth.hashPassword(auth.validPassword(req.body.password));
+    if (upd.active === 0 && !db.get('SELECT 1 FROM users WHERE active = 1 AND id != ?', u.id)) throw new HttpError(400, 'Il faut garder au moins un compte actif.');
     db.update('users', u.id, upd);
-    if (upd.active === 0) db.run('DELETE FROM sessions WHERE user_id = ?', u.id);
-    activity.log({ user_id: req.user.id, kind: 'system', text: `Compte ${u.email} modifié${upd.active === 0 ? ' (désactivé)' : upd.active === 1 ? ' (réactivé)' : ''}${upd.role ? ` · rôle ${settings.ROLES[upd.role].label}` : ''} par ${req.user.name}` });
+    if (upd.active === 0 || (upd.password_hash && u.id !== req.user.id)) auth.closeSessions(u.id);
+    else if (upd.password_hash) auth.closeSessions(u.id, req);
+    activity.log({ user_id: req.user.id, kind: 'system', text: `Compte ${u.email} modifié${upd.active === 0 ? ' (désactivé)' : upd.active === 1 ? ' (réactivé)' : ''}${upd.password_hash ? ' · mot de passe changé' : ''} par ${req.user.name}` });
     json(res, { ok: true });
   });
 
   // --- Paramètres ---
-  const EDITABLE = ['company', 'colors', 'fonts', 'access', 'quotes', 'reminders', 'mails', 'deal_types', 'integrations', 'rgpd', 'demo'];
+  const EDITABLE = ['company', 'colors', 'fonts', 'access', 'quotes', 'reminders', 'mails', 'deal_types', 'integrations', 'rgpd', 'demo', 'payments'];
   router.get('/api/settings', admin, (req, res) => {
     const out = {};
     for (const k of EDITABLE) out[k] = settings.get(k);
@@ -542,6 +627,10 @@ function register(router) {
     out.app_url = config.appUrl;
     out.service_account = google.email();
     out.site_api = Boolean(config.siteApiKey);
+    out.stripe_mode = payments.stripeMode();
+    out.stripe_webhook = Boolean(config.stripe.webhookSecret);
+    out.contact_photo = Boolean(settings.get('contact_photo'));
+    out.google_ready = Boolean(config.google.clientId);
     json(res, out);
   });
   router.put('/api/settings/:key', admin, (req, res) => {
@@ -555,8 +644,19 @@ function register(router) {
       v = Object.fromEntries(['primary', 'secondary', 'accent', 'background', 'card', 'text'].map((k) => [k, v[k]]));
       v = Object.fromEntries(Object.entries(v).map(([k, c]) => [k, String(c).toUpperCase()]));
     }
-    if (key === 'quotes') v = { ...v, number_prefix: String(v.number_prefix || 'D').replace(/[^A-Za-z0-9-]/g, '').slice(0, 10) || 'D' };
-    if (key === 'access') v = { ...v, allowed_domain: String(v.allowed_domain || '').trim().toLowerCase().replace(/^@/, '') };
+    if (key === 'quotes') {
+      v = { ...v, number_prefix: String(v.number_prefix || 'D').replace(/[^A-Za-z0-9-]/g, '').slice(0, 10) || 'D', number_start: Math.max(1, Math.min(999999, parseInt(v.number_start, 10) || 1)),
+        deposit_mode: v.deposit_mode === 'fixe' ? 'fixe' : 'pct', deposit_pct: Math.min(100, Math.max(0, Number(v.deposit_pct) || 0)), deposit_fixed_cents: Math.max(0, Math.round(Number(v.deposit_fixed_cents) || 0)) };
+      delete v.brochure_url;
+    }
+    if (key === 'payments') {
+      v = { rib: Boolean(v.rib), stripe: Boolean(v.stripe), stripe_transfer: v.stripe_transfer !== false, pennylane: false, holder: String(v.holder || '').trim().slice(0, 120), iban: String(v.iban || '').replace(/\s/g, '').toUpperCase().slice(0, 34), bic: String(v.bic || '').replace(/\s/g, '').toUpperCase().slice(0, 11), transfer_note: String(v.transfer_note || '').slice(0, 300) };
+      if (v.iban && !payments.validIban(v.iban)) throw new HttpError(400, 'IBAN invalide : vérifiez les chiffres (clé de contrôle incorrecte).');
+      if (v.bic && !/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v.bic)) throw new HttpError(400, 'BIC invalide (8 ou 11 caractères).');
+      if (v.rib && !v.iban) throw new HttpError(400, "Renseignez l'IBAN pour proposer le virement classique.");
+    }
+
+    if (key === 'access') v = { ...v, allowed_domain: String(v.allowed_domain || '').trim().toLowerCase().replace(/^@/, ''), google: Boolean(v.google) };
     if (key === 'access' && v.allowed_domain && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(v.allowed_domain)) throw new HttpError(400, 'Domaine invalide (ex. mon-entreprise.fr).');
     if (key === 'mails') v = Object.fromEntries(Object.entries(v || {}).filter(([k]) => settings.MAIL_TEMPLATES[k]).map(([k, t]) => [k, { subject: String(t.subject || '').slice(0, 200), body: String(t.body || '').slice(0, 5000) }]));
     if (key === 'deal_types' && (!Array.isArray(v) || !v.length || v.some((t) => !t.key || !t.label))) throw new HttpError(400, 'Chaque type a besoin d’une clé et d’un nom.');
@@ -565,6 +665,21 @@ function register(router) {
     json(res, { ok: true });
   });
   router.post('/api/settings/colors/check', admin, (req, res) => json(res, { issues: settings.checkColors(req.body || {}) }));
+  // La photo du contact, affichée sur la page de validation du devis
+  router.post('/api/settings/photo', admin, (req, res) => {
+    const buf = Buffer.from(String(req.body.content || ''), 'base64');
+    const isPng = buf.slice(0, 4).toString('hex') === '89504e47', isJpg = buf[0] === 0xff && buf[1] === 0xd8;
+    if (!isPng && !isJpg) throw new HttpError(400, 'La photo doit être une image PNG ou JPEG.');
+    if (buf.length > 2e6) throw new HttpError(400, 'Photo trop lourde (2 Mo maximum).');
+    const dir = path.join(config.dataDir, 'uploads');
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `contact-${Date.now()}.${isPng ? 'png' : 'jpg'}`;
+    fs.writeFileSync(path.join(dir, name), buf);
+    const old = settings.get('contact_photo');
+    if (old) fs.rmSync(path.join(dir, path.basename(old)), { force: true });
+    settings.set('contact_photo', name);
+    json(res, { ok: true });
+  });
   router.post('/api/settings/logo', admin, (req, res) => {
     const buf = Buffer.from(String(req.body.content || ''), 'base64');
     const isPng = buf.slice(0, 4).toString('hex') === '89504e47', isJpg = buf[0] === 0xff && buf[1] === 0xd8;
@@ -648,14 +763,25 @@ function register(router) {
   router.get('/api/rgpd/stale', admin, (req, res) => json(res, rgpd.staleContacts()));
   router.post('/api/rgpd/purge', admin, (req, res) => json(res, { purged: rgpd.purge() }));
 
+  // Les chiffres de chaque mail automatique : envoyés ce mois-ci, ouverts
+  router.get('/api/mails/stats', area('relances'), (req, res) => {
+    const month = stats.range('mois').from;
+    const out = {};
+    for (const k of settings.AUTO_MAILS) {
+      const r = db.get("SELECT COUNT(*) n, SUM(CASE WHEN status IN ('opened', 'clicked') THEN 1 ELSE 0 END) o FROM emails WHERE template = ? AND created_at >= ?", k, month);
+      out[k] = { month: r.n, opened: r.n ? Math.round(((r.o || 0) / r.n) * 100) : null };
+    }
+    json(res, out);
+  });
+
   // Test d'envoi de mail depuis les paramètres
   router.post('/api/mails/test', admin, async (req, res) => {
-    const key = settings.MAIL_TEMPLATES[req.body.template] ? req.body.template : 'accuse_reception';
-    const r = await mail.send({ to: req.user.email, template: key, vars: { prenom: req.user.name.split(' ')[0], numero: 'D-TEST-0001', montant: money(50000), code: '123456', lien: config.appUrl, titre: 'Demande TEST', client: 'Client TEST', libelle: 'acompte', validite: '—', date: '—', invite_par: req.user.name, email: req.user.email, resume: 'Exemple de résumé', source: 'test', delai: '24 h', message: 'Message de test.' } });
+    const key = settings.MAIL_TEMPLATES[req.body.template] ? req.body.template : 'devis';
+    const r = await mail.send({ to: req.user.email, template: key, vars: { prenom: req.user.name.split(' ')[0], numero: 'D-TEST-0001', montant: money(50000), code: '123456', lien: config.appUrl, titre: 'Demande TEST', client: 'Client TEST', libelle: 'acompte', validite: '—', date: '—', acompte: money(15000), societe: 'Entreprise TEST', resume: 'Exemple de résumé', source: 'test', message: 'Message de test.' } });
     json(res, r);
   });
   router.get('/api/mails/preview/:template', admin, (req, res) => {
-    const r = mail.render(req.params.template, { prenom: 'Camille', numero: 'D-2026-0001', montant: money(50000), code: '123456', lien: `${config.appUrl}/s/exemple`, titre: 'Anniversaire · 12 enfants', client: 'Camille TEST', libelle: 'acompte 30 %', validite: '30/11/2026', date: 'samedi 15 novembre, 14 h', invite_par: req.user.name, email: 'accueil@exemple.fr', resume: 'Contact : Camille TEST', source: 'site', delai: '24 h', message: 'Votre message.' });
+    const r = mail.render(req.params.template, { prenom: 'Camille', numero: 'D-2026-0001', montant: money(50000), code: '123456', lien: `${config.appUrl}/s/exemple`, titre: 'Anniversaire · 12 enfants', client: 'Camille TEST', libelle: 'acompte 30 %', validite: '30/11/2026', date: 'jeudi 4 décembre, 18 h', acompte: money(15000), societe: 'Entreprise TEST', resume: 'Contact : Camille TEST', source: 'site', message: 'Votre message.' });
     send(res, 200, r.html, 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'" });
   });
 }

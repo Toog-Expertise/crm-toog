@@ -7,7 +7,8 @@ const { HttpError } = require('./util');
 const round = (n) => Math.round(n);
 
 // Totaux d'un devis à partir de ses lignes
-function totals(lines, depositPct) {
+// depositFixed : un acompte en euros (centimes) au lieu d'un pourcentage
+function totals(lines, depositPct, depositFixed = null) {
   let ttc = 0, ht = 0;
   const out = lines.map((l) => {
     const qty = Math.max(0, Number(l.qty) || 0);
@@ -19,7 +20,11 @@ function totals(lines, depositPct) {
     return { product_id: l.product_id || null, label: String(l.label || '').slice(0, 300), description: String(l.description || '').slice(0, 500), qty, unit_cents: unit, vat_rate: vat, total_cents: lineTtc };
   });
   const pct = Math.min(100, Math.max(0, Number(depositPct) || 0));
-  return { lines: out, total_ttc: ttc, total_ht: ht, total_vat: ttc - ht, deposit_pct: pct, deposit_cents: round(ttc * pct / 100) };
+  if (depositFixed !== null && depositFixed !== undefined) {
+    const fixed = Math.min(ttc, Math.max(0, round(Number(depositFixed) || 0)));
+    return { lines: out, total_ttc: ttc, total_ht: ht, total_vat: ttc - ht, deposit_mode: 'fixe', deposit_pct: ttc ? Math.round((fixed / ttc) * 1000) / 10 : 0, deposit_fixed_cents: fixed, deposit_cents: fixed };
+  }
+  return { lines: out, total_ttc: ttc, total_ht: ht, total_vat: ttc - ht, deposit_mode: 'pct', deposit_pct: pct, deposit_fixed_cents: null, deposit_cents: round(ttc * pct / 100) };
 }
 
 const typesOf = (p) => String(p.deal_types || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -30,12 +35,22 @@ function lineFor(p, people) {
   return { product_id: p.id, label: p.name, description: p.description, qty, unit_cents: p.price_cents ?? 0, vat_rate: p.vat_rate };
 }
 
-// Lignes proposées pour une demande : la première prestation du catalogue qui correspond au type
+// Acompte du devis : celui de la première prestation qui a le sien (catalogue), sinon celui des paramètres
+function depositPctFor(lines) {
+  for (const l of lines || []) {
+    if (!l.product_id) continue;
+    const p = db.get('SELECT deposit_pct FROM products WHERE id = ?', Number(l.product_id));
+    if (p && p.deposit_pct !== null && p.deposit_pct !== undefined) return p.deposit_pct;
+  }
+  return settings.get('quotes').deposit_pct;
+}
+
+// Lignes proposées pour une demande : l'activité choisie, sinon la première prestation du catalogue qui correspond au type
 function suggestLines(deal) {
   const products = db.all("SELECT * FROM products WHERE active = 1 AND is_option = 0 AND pricing != 'quote' AND price_cents IS NOT NULL ORDER BY sort, id");
   const data = safeJson(deal.data);
   const lines = [];
-  const p = products.find((x) => typesOf(x).includes(deal.type)) || null;
+  const p = products.find((x) => data.product_id && x.id === Number(data.product_id)) || products.find((x) => typesOf(x).includes(deal.type)) || null;
   if (p) lines.push(lineFor(p, deal.people));
   // Options cochées dans le formulaire
   for (const oid of [].concat(data.options || [])) {
@@ -72,9 +87,9 @@ function autoQuote({ product_id, people, options = [] }) {
     if (!(!typesOf(o).length || typesOf(o).some((t) => typesOf(p).includes(t)))) throw new HttpError(400, 'Option non compatible avec cette activité.');
     lines.push(lineFor(o, n));
   }
-  return { product: p, people: n, notes, ...totals(lines, settings.get('quotes').deposit_pct) };
+  return { product: p, people: n, notes, ...totals(lines, depositPctFor(lines)) };
 }
 
 function safeJson(s) { try { return JSON.parse(s || '{}'); } catch { return {}; } }
 
-module.exports = { totals, suggestLines, publicCatalog, autoQuote, matchesType, safeJson };
+module.exports = { totals, suggestLines, publicCatalog, autoQuote, matchesType, safeJson, depositPctFor };

@@ -1,5 +1,7 @@
 'use strict';
-// Paiements Stripe : Checkout créé côté serveur, montant calculé par le CRM, webhook signé.
+// Paiements, en tiroirs : virement classique (RIB, acompte marqué payé à la main), Stripe (carte, et virement vers un IBAN
+// propre au client que Stripe suit), Pennylane (module à part). Checkout créé côté serveur, montant calculé par le CRM,
+// webhook signé qui passe le devis en « Acompte payé » avec le montant réglé.
 const crypto = require('node:crypto');
 const db = require('./db');
 const settings = require('./settings');
@@ -79,7 +81,7 @@ function depositFor(quote) {
   const { paid } = quoteBalance(quote);
   const due = Math.max(0, quote.deposit_cents - paid);
   if (due < 50) return null;
-  return createPayment({ deal_id: quote.deal_id, quote_id: quote.id, kind: 'deposit', amount_cents: due, label: `acompte ${String(quote.deposit_pct).replace('.', ',')} % · devis ${quote.number}` });
+  return createPayment({ deal_id: quote.deal_id, quote_id: quote.id, kind: 'deposit', amount_cents: due, label: `acompte${quote.deposit_mode === 'fixe' ? '' : ` ${String(quote.deposit_pct).replace('.', ',')} %`} · devis ${quote.number}` });
 }
 
 async function sendPaymentLink(p, user = null) {
@@ -109,17 +111,28 @@ async function checkoutUrl(token) {
     if (old?.status === 'complete') return { done: true, payment: p };
     if (old?.status === 'open') await stripe('POST', `/checkout/sessions/${encodeURIComponent(old.id)}/expire`).catch(() => null);
   }
+  // Virement suivi par Stripe : un client Stripe, et un IBAN propre à ce client (customer balance, virement SEPA)
+  const transfer = settings.get('payments').stripe_transfer;
+  let customer = p.stripe_customer;
+  if (transfer && !customer) {
+    const cu = await stripe('POST', '/customers', { email: c?.email || undefined, name: deal ? (db.get('SELECT name FROM companies WHERE id = ?', deal.company_id)?.name || fullName(c)) : undefined, metadata: { crm: 'crm-toog', deal_id: deal?.id } });
+    customer = cu.id;
+    db.update('payments', p.id, { stripe_customer: customer });
+  }
   const session = await stripe('POST', '/checkout/sessions', {
     mode: 'payment',
+    payment_method_types: transfer ? { 0: 'card', 1: 'customer_balance' } : { 0: 'card' },
+    payment_method_options: transfer ? { customer_balance: { funding_type: 'bank_transfer', bank_transfer: { type: 'eu_bank_transfer', eu_bank_transfer: { country: 'FR' } } } } : undefined,
+    customer: customer || undefined,
     line_items: { 0: { quantity: 1, price_data: { currency: 'eur', unit_amount: p.amount_cents, product_data: { name, description: quote ? `Devis ${quote.number}` : undefined } } } },
-    customer_email: c?.email || undefined,
+    customer_email: customer ? undefined : c?.email || undefined,
     client_reference_id: String(p.id),
     metadata: { payment_id: p.id, crm: 'crm-toog' },
     payment_intent_data: { metadata: { payment_id: p.id, crm: 'crm-toog' }, description: name },
     success_url: `${config.appUrl}/p/${p.pay_token}?merci=1`,
     cancel_url: `${config.appUrl}/p/${p.pay_token}?annule=1`,
     locale: 'fr',
-    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    expires_at: Math.floor(Date.now() / 1000) + (transfer ? 86400 : 3600),
   });
   db.update('payments', p.id, { stripe_session_id: session.id, livemode: session.livemode ? 1 : 0 });
   return { url: session.url, payment: p };
@@ -146,21 +159,42 @@ async function markPaid(p, { session_id, amount, payment_intent, livemode }) {
     if (p.deal_id) activity.log({ deal_id: p.deal_id, kind: 'payment', text: `Attention : paiement en double reçu (${money(paidAmount)}), paiement n°${id} à rembourser` });
     return;
   }
-  db.update('payments', p.id, { status: 'paid', paid_at: settings.now(), amount_cents: paidAmount, stripe_session_id: session_id || p.stripe_session_id, stripe_payment_intent: payment_intent || p.stripe_payment_intent, livemode: livemode ? 1 : 0 });
+  db.update('payments', p.id, { status: 'paid', method: 'carte', paid_at: settings.now(), amount_cents: paidAmount, stripe_session_id: session_id || p.stripe_session_id, stripe_payment_intent: payment_intent || p.stripe_payment_intent, livemode: livemode ? 1 : 0 });
   const wasCancelled = p.status === 'cancelled';
   const gap = paidAmount !== p.amount_cents;
   p = getPayment(p.id);
+  await afterPaid(p, `Paiement reçu (Stripe) : ${p.label} · ${money(p.amount_cents)}${gap || wasCancelled ? ' · attention : lien annulé ou montant différent du CRM, à vérifier' : ''}`);
+}
+
+const METHODS = { carte: 'carte (Stripe)', virement: 'virement', especes: 'espèces', cheque: 'chèque' };
+
+// Encaissement noté à la main : virement reçu sur le compte, espèces, chèque. Mêmes suites qu'un paiement Stripe.
+async function markReceived(id, { method = 'virement', amount_cents, paid_at } = {}, user) {
+  const p = getPayment(id);
+  if (!['pending', 'failed'].includes(p.status)) throw new HttpError(409, 'Ce paiement est déjà réglé ou annulé.');
+  if (!METHODS[method] || method === 'carte') throw new HttpError(400, 'Moyen de paiement inconnu (virement, espèces ou chèque).');
+  const amount = amount_cents ? Math.round(Number(amount_cents)) : p.amount_cents;
+  if (!(amount > 0 && amount <= 10000000)) throw new HttpError(400, 'Montant invalide.');
+  const at = Number(paid_at) || settings.now();
+  db.update('payments', p.id, { status: 'paid', method, amount_cents: amount, paid_at: at });
+  const fresh = getPayment(p.id);
+  await afterPaid(fresh, `Paiement reçu (${METHODS[method]}) : ${fresh.label} · ${money(amount)}${amount !== p.amount_cents ? ` · montant attendu ${money(p.amount_cents)}` : ''}${user ? `, noté par ${user.name}` : ''}`, user);
+  return fresh;
+}
+
+// Après un encaissement : historique, reçu au client, étape de la demande, relances, agenda
+async function afterPaid(p, text, user = null) {
   if (!p.deal_id) return;
   const deal = deals.getDeal(p.deal_id);
   const c = deals.contactOf(deal);
-  activity.log({ deal_id: deal.id, kind: 'payment', text: `Paiement reçu (Stripe) : ${p.label} · ${money(p.amount_cents)}${gap || wasCancelled ? ' · attention : lien annulé ou montant différent du CRM, à vérifier' : ''}` });
+  activity.log({ deal_id: deal.id, user_id: user?.id, kind: 'payment', text });
   if (c?.email) await mail.send({ to: c.email, template: 'recu', deal_id: deal.id, contact_id: c.id, vars: { prenom: c.first_name, montant: money(p.amount_cents), libelle: p.label } });
   // Étapes : acompte payé, puis payé quand tout est réglé
   const quote = p.quote_id ? db.get('SELECT * FROM quotes WHERE id = ?', p.quote_id) : null;
   if (quote) {
     const { remaining } = quoteBalance(quote);
-    if (remaining <= 0) deals.setStage(deal.id, 'paye');
-    else if (['nouvelle', 'a_rappeler', 'devis_envoye', 'signature', 'signe'].includes(deal.stage)) deals.setStage(deal.id, 'acompte');
+    if (remaining <= 0 && deal.stage !== 'paye') deals.setStage(deal.id, 'paye');
+    else if (remaining > 0 && [...settings.BEFORE_SIGN, 'signe'].includes(deal.stage)) deals.setStage(deal.id, 'acompte');
   }
   require('./reminders').onPaid(deal.id);
   require('./calendar').onDepositPaid(deal.id).catch((e) => console.error('Agenda :', e.message));
@@ -217,4 +251,42 @@ async function status() {
   }
 }
 
-module.exports = { createPayment, depositFor, sendPaymentLink, checkoutUrl, verifyWebhook, handleWebhook, refund, status, stripeMode, payLink, quoteBalance, getPayment, KIND_LABEL, markPaid, flatten };
+// IBAN : format et clé de contrôle (modulo 97)
+function validIban(raw) {
+  const iban = String(raw || '').replace(/\s/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) return false;
+  const moved = (iban.slice(4) + iban.slice(0, 4)).replace(/[A-Z]/g, (ch) => String(ch.charCodeAt(0) - 55));
+  let r = 0;
+  for (const d of moved) r = (r * 10 + Number(d)) % 97;
+  return r === 1;
+}
+
+// Tiroirs activés dans les paramètres (Stripe seulement si ses clés sont dans le .env, RIB seulement avec un IBAN)
+function methods() {
+  const pm = settings.get('payments');
+  return { stripe: Boolean(pm.stripe && config.stripe.secret), rib: Boolean(pm.rib && pm.iban), pm };
+}
+// Moyens d'un devis : ceux choisis sur le devis (par défaut, tous les tiroirs activés) ; [] = sans lien de paiement
+function quoteMethods(q) {
+  const m = methods();
+  const on = ['rib', 'stripe'].filter((k) => m[k]);
+  if (q.pay_methods === null || q.pay_methods === undefined || q.pay_methods === '') return on;
+  let chosen;
+  try { chosen = JSON.parse(q.pay_methods); } catch { chosen = on; }
+  return on.filter((k) => chosen.includes(k));
+}
+
+// Export pour la comptabilité (Pennylane, tableur…) : une ligne par paiement encaissé ou remboursé
+function exportCsv() {
+  const rows = db.all(`SELECT p.*, d.title, c.first_name, c.last_name, co.name company_name, q.number quote_number FROM payments p
+    LEFT JOIN deals d ON d.id = p.deal_id LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN companies co ON co.id = d.company_id LEFT JOIN quotes q ON q.id = p.quote_id
+    WHERE p.status IN ('paid', 'partially_refunded', 'refunded') AND p.kind != 'test' ORDER BY p.paid_at`);
+  const cell = (v) => { const t = String(v ?? ''); return /[";\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const eur = (c) => (c / 100).toFixed(2).replace('.', ',');
+  const day = (ts) => new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris' }).format(ts);
+  const lines = [['Date', 'Client', 'Libellé', 'Devis', 'Montant (€)', 'Remboursé (€)', 'Moyen', 'Statut', 'Référence Stripe']];
+  for (const p of rows) lines.push([day(p.paid_at), p.company_name || fullName(p) || p.title || '', p.label, p.quote_number || '', eur(p.amount_cents), eur(p.refunded_cents), METHODS[p.method] || (p.stripe_payment_intent ? METHODS.carte : ''), p.status === 'paid' ? 'encaissé' : p.status === 'refunded' ? 'remboursé' : 'remboursé en partie', p.stripe_payment_intent || '']);
+  return '\ufeff' + lines.map((l) => l.map(cell).join(';')).join('\r\n') + '\r\n';
+}
+
+module.exports = { quoteMethods, markReceived, afterPaid, METHODS, validIban, methods, exportCsv, createPayment, depositFor, sendPaymentLink, checkoutUrl, verifyWebhook, handleWebhook, refund, status, stripeMode, payLink, quoteBalance, getPayment, KIND_LABEL, markPaid, flatten };
