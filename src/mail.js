@@ -54,7 +54,7 @@ function buttonLabel(url) {
   if (url.includes('/s/')) return 'Voir et signer le devis';
   if (url.includes('/p/')) return 'Payer en ligne';
   if (url.includes('/d/')) return 'Voir le devis';
-  if (url.includes('/login')) return 'Se connecter';
+  if (url.includes('/login') || url.includes('/auth/lien')) return 'Se connecter';
   return 'Ouvrir';
 }
 

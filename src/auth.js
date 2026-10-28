@@ -7,7 +7,7 @@ const mail = require('./mail');
 const rate = require('./ratelimit');
 const { config } = require('./env');
 const { sha256, randomToken, randomCode, safeEqual, normEmail, isEmail, HttpError, failuresBlocked, recordFailure } = require('./util');
-const { parseCookies, setCookie, redirect, json, clientIp } = require('./http');
+const { parseCookies, setCookie, redirect, json, html, clientIp } = require('./http');
 
 const COOKIE = 'crm_session';
 const SESSION_DAYS = 30;
@@ -151,14 +151,16 @@ function register(router) {
     const code = randomCode();
     db.run('INSERT INTO login_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0',
       email, sha256(config.sessionSecret + code), Date.now() + 600e3);
-    const r = await mail.send({ to: email, template: 'code_connexion', vars: { code } });
+    const lien = `${config.appUrl}/auth/lien?e=${encodeURIComponent(email)}&c=${code}`;
+    const r = await mail.send({ to: email, template: 'code_connexion', vars: { code, lien } });
     if (r.status === 'failed') throw new HttpError(502, "Le mail n'a pas pu partir. Réessayez, ou contactez le gérant.");
     json(res, { ok: true, simulated: r.status === 'simulated' });
   });
 
-  router.post('/auth/code/verify', (req, res) => {
-    const email = normEmail(req.body.email);
-    const code = String(req.body.code || '').replace(/\D/g, '');
+  // Vérifie le code (saisi, ou porté par le lien du mail) et ouvre la session
+  function checkCode(req, res, emailRaw, codeRaw) {
+    const email = normEmail(emailRaw);
+    const code = String(codeRaw || '').replace(/\D/g, '');
     const row = db.get('SELECT * FROM login_codes WHERE email = ?', email);
     if (!row || row.expires_at < Date.now()) throw new HttpError(400, 'Code expiré : demandez-en un nouveau.');
     if (failuresBlocked(db, 'login:' + email)) throw new HttpError(429, 'Trop de codes faux pour cette adresse aujourd’hui : réessayez demain.');
@@ -168,7 +170,30 @@ function register(router) {
     db.run('DELETE FROM login_codes WHERE email = ?', email);
     const user = admit(email, null, 'code par mail', req);
     startSession(res, user, req);
+  }
+
+  router.post('/auth/code/verify', (req, res) => {
+    checkCode(req, res, req.body.email, req.body.code);
     json(res, { ok: true });
+  });
+
+  // Lien du mail : une page avec un bouton (un clic volontaire : les robots qui ouvrent les liens ne consomment pas le code)
+  router.get('/auth/lien', (req, res) => {
+    const pages = require('./pages');
+    const e = req.query.get('e') || '', c = req.query.get('c') || '';
+    const esc = require('./util').escapeHtml;
+    html(res, pages.page({ title: 'Connexion', bodyClass: 'app-bg', body: `<main class="login"><form class="login-card" method="post" action="/auth/lien">
+      <h1>Connexion</h1><p>Se connecter au CRM avec <b>${esc(e)}</b>.</p>
+      <input type="hidden" name="e" value="${esc(e)}"><input type="hidden" name="c" value="${esc(c)}">
+      <button class="btn btn-primary btn-block" type="submit">Se connecter</button></form></main>` }));
+  });
+  router.post('/auth/lien', (req, res) => {
+    try {
+      checkCode(req, res, req.body.e, req.body.c);
+      redirect(res, '/');
+    } catch (e) {
+      redirect(res, '/login?erreur=' + encodeURIComponent(e.status ? e.message : 'Connexion impossible.'));
+    }
   });
 
   router.post('/auth/logout', (req, res) => {
