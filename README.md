@@ -16,10 +16,11 @@ Chaque entreprise installe sa propre copie sur son serveur, puis règle dans le 
 - **Signature électronique** : lien secret valable 30 jours, code par mail, signature au doigt, PDF signé avec une page de preuve et les empreintes SHA-256.
 - **Paiements Stripe** : acompte, solde, paiement libre, remboursement. Le paiement est créé côté serveur et le webhook est signé.
 - **Mails par Resend**, avec des modèles modifiables et le statut de chaque mail (délivré, ouvert, rejeté).
+- **Messages** : les mails des clients arrivent dans le CRM, rangés avec leur demande, et on y répond en un clic. Une réponse du client arrête ses relances.
 - **Relances** : devis non signé, acompte non payé, avis Google après la venue, demande sans réponse. Elles s'arrêtent dès que le client signe, paie ou répond. Une horloge de test permet de les voir partir.
 - **Tableau de bord** : visites du site (Google Analytics 4), demandes, devis, chiffre d'affaires signé et encaissé.
 - **Agenda** synchronisé avec Google Agenda.
-- **Serveur MCP** pour interroger le CRM depuis Claude, avec un jeton personnel. Les actions sensibles restent à confirmer dans le CRM.
+- **MCP et API** : avec un jeton personnel, Claude (MCP) ou un autre outil (API) se branche au CRM, avec les droits de la personne. Les actions sensibles restent à confirmer dans le CRM.
 - **RGPD** : export et suppression des données d'un contact, purge automatique après 3 ans sans activité (durée réglable).
 
 Côté technique : Node.js 22 ou plus récent, et la base SQLite intégrée à Node. Le CRM n'a **aucune dépendance**, donc pas de `npm install` et presque rien à mettre à jour.
@@ -149,6 +150,18 @@ Pour vérifier : **Paramètres › Mails et relances** › un modèle › « M'e
 
 Pour passer en réel : le gérant active le compte Stripe (informations de l'entreprise, SIRET, pièce d'identité, IBAN). Ensuite, on remplace les clés de test par les clés réelles dans le `.env` et on recrée le webhook en mode réel.
 
+#### La boîte de réception (écran Messages)
+
+Les réponses des clients arrivent dans le CRM, rangées avec leur demande.
+
+1. Sur resend.com, ouvrez **Domains**, choisissez le domaine `notif.mon-entreprise.fr` et activez la **réception** (« Receiving »). Ajoutez dans le DNS l'enregistrement MX affiché.
+2. Dans le `.env`, indiquez l'adresse qui recevra les réponses : `MAIL_INBOUND=reponses@notif.mon-entreprise.fr`.
+3. Dans le webhook Resend (voir plus haut), cochez aussi l'événement `email.received`.
+
+Chaque mail envoyé à un client porte une adresse de réponse propre à sa demande (`reponses+123@…`) : sa réponse se range toute seule dans la bonne conversation. Un expéditeur inconnu apparaît aussi dans **Messages** : un clic le transforme en demande.
+
+Pour recevoir aussi les mails envoyés à votre adresse de contact habituelle, ajoutez un transfert automatique de cette boîte vers l'adresse `MAIL_INBOUND`.
+
 #### Google Analytics et Google Agenda (compte de service)
 
 1. Dans le projet Google Cloud, ouvrez **API et services** › **Bibliothèque** et activez **Google Analytics Data API** et **Google Calendar API**.
@@ -184,14 +197,17 @@ Les chiffres d'Analytics sont mis en cache une heure. Une réservation entre dan
     -d '{"type":"entreprise","name":"Nom Prénom","email":"client@exemple.fr","phone":"0600000000","people":20,"event_at":"2026-12-04T18:00","message":"…","data":{"societe":"Société"}}'
   ```
 
-#### Claude (MCP)
+#### MCP et API : brancher Claude ou d'autres outils
 
-Dans le CRM, ouvrez **Mon compte** › **Créer un jeton** et copiez l'adresse affichée (`https://crm…/mcp/crm_…`). Dans Claude, ouvrez **Paramètres** › **Connecteurs** › **Ajouter un connecteur personnalisé** et collez cette adresse.
+Dans le CRM, ouvrez **Paramètres › MCP et API** (ou **Mon compte**) › **Créer un jeton**. Le jeton a les droits de la personne qui le crée.
 
-Claude peut alors :
+- **Claude** : dans Claude, ouvrez **Paramètres** › **Connecteurs** › **Ajouter un connecteur personnalisé** et collez l'adresse affichée (`https://crm…/mcp/crm_…`).
+- **Un autre outil** (logiciel de caisse, Zapier, Make, tableur) : il appelle l'API `https://crm…/api/…` avec l'en-tête `Authorization: Bearer <jeton>`. Les adresses principales sont listées dans **Paramètres › MCP et API**.
 
-- lire les demandes, les devis, les paiements et les chiffres ;
-- préparer un devis ou une relance.
+Depuis Claude, le CRM permet ceci :
+
+- lire les demandes, les messages à traiter, les devis, les paiements et les chiffres ;
+- préparer un devis (en brouillon) ou une relance (en pause, à réactiver dans le CRM).
 
 Il ne peut pas envoyer, rembourser ou supprimer : ces actions apparaissent dans **Accueil › À confirmer**, où une personne de l'équipe les confirme.
 

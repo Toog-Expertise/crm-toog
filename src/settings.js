@@ -16,8 +16,8 @@ const STAGES = [
 ];
 
 const ROLES = {
-  gerant: { label: 'Gérant', access: ['accueil', 'demandes', 'contacts', 'devis', 'paiements', 'relances', 'catalogue', 'agenda', 'equipe', 'parametres'] },
-  accueil: { label: 'Accueil', access: ['accueil', 'demandes', 'contacts', 'devis', 'paiements', 'relances', 'catalogue', 'agenda'] },
+  gerant: { label: 'Gérant', access: ['accueil', 'demandes', 'messages', 'contacts', 'devis', 'paiements', 'relances', 'catalogue', 'agenda', 'equipe', 'parametres'] },
+  accueil: { label: 'Accueil', access: ['accueil', 'demandes', 'messages', 'contacts', 'devis', 'paiements', 'relances', 'catalogue', 'agenda'] },
   animation: { label: 'Animation', access: ['agenda'] },
 };
 

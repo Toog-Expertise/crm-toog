@@ -24,6 +24,7 @@ function exportContact(id) {
     devis: inIds('quotes').map(strip),
     paiements: inIds('payments').map(({ pay_token, ...p }) => p),
     mails: db.all('SELECT to_addr, template, subject, status, created_at FROM emails WHERE contact_id = ?', contact.id),
+    messages: db.all('SELECT direction, from_addr, to_addr, subject, body, created_at FROM messages WHERE contact_id = ? OR from_addr = ? ORDER BY created_at', contact.id, contact.email || ''),
     historique: db.all('SELECT kind, text, created_at FROM activities WHERE contact_id = ? ORDER BY created_at', contact.id),
   };
 }
@@ -34,6 +35,9 @@ function eraseContact(id, user = null) {
   const dealIds = db.all('SELECT id FROM deals WHERE contact_id = ?', c.id).map((d) => d.id);
   const paid = dealIds.length && db.get(`SELECT 1 FROM payments WHERE deal_id IN (${dealIds.map(() => '?').join(',')}) AND status IN ('paid', 'partially_refunded', 'refunded') LIMIT 1`, ...dealIds);
   db.tx(() => {
+    // La messagerie : toujours supprimée (pas de valeur comptable)
+    db.run('DELETE FROM messages WHERE contact_id = ? OR from_addr = ?', c.id, c.email || '');
+    for (const dId of dealIds) db.run('DELETE FROM messages WHERE deal_id = ?', dId);
     for (const dId of dealIds) {
       // Les PDF de devis contiennent des données personnelles
       for (const q of db.all('SELECT number FROM quotes WHERE deal_id = ?', dId)) {

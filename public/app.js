@@ -120,6 +120,7 @@
   const NAV = [
     { key: 'accueil', href: '#/', label: 'Accueil', icon: '⌂' },
     { key: 'demandes', href: '#/demandes', label: 'Demandes', icon: '▦' },
+    { key: 'messages', href: '#/messages', label: 'Messages', icon: '✉' },
     { key: 'contacts', href: '#/contacts', label: 'Contacts', icon: '☺' },
     { key: 'devis', href: '#/devis', label: 'Devis', icon: '✎' },
     { key: 'paiements', href: '#/paiements', label: 'Paiements', icon: '€' },
@@ -138,7 +139,7 @@
   function layout(active) {
     const items = NAV.filter((n) => can(n.key));
     $('#side').innerHTML = h`${logoHtml('side-logo')}
-      <nav class="nav">${items.map((n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}">${n.label}${n.key === 'accueil' && CRM.me.pending_actions ? h`<span class="count">${CRM.me.pending_actions}</span>` : ''}</a>`)}</nav>
+      <nav class="nav">${items.map((n) => h`<a href="${n.href}" class="${n.key === active ? 'on' : ''}">${n.label}${n.key === 'accueil' && CRM.me.pending_actions ? h`<span class="count">${CRM.me.pending_actions}</span>` : ''}${n.key === 'messages' && CRM.me.unread_messages ? h`<span class="count">${CRM.me.unread_messages}</span>` : ''}</a>`)}</nav>
       <div class="side-user"><b>${CRM.me.user.name} · ${CRM.me.user.role_label.toLowerCase()}</b><span class="muted">${CRM.me.user.email}</span><br><a class="link" href="#/compte">Mon compte</a> · <button class="link" id="logout">Se déconnecter</button></div>`.s;
     $('#logout').onclick = async () => { await api('POST', '/auth/logout', {}); location.href = '/login'; };
     const main = items.slice(0, 4);
@@ -173,8 +174,8 @@
     const parts = hash.split('?')[0].split('/').filter(Boolean);
     const params = new URLSearchParams(hash.split('?')[1] || '');
     let view = parts[0] || 'accueil';
-    const map = { accueil: 'dashboard', demandes: 'deals', contacts: 'contacts', entreprises: 'contacts', devis: 'quotes', paiements: 'payments', relances: 'reminders', catalogue: 'catalogue', agenda: 'agenda', equipe: 'team', parametres: 'settings', compte: 'account', demarrage: 'setup' };
-    const area = { dashboard: 'accueil', deals: 'demandes', contacts: 'contacts', quotes: 'devis', payments: 'paiements', reminders: 'relances', catalogue: 'catalogue', agenda: 'agenda', team: 'equipe', settings: 'parametres', setup: 'parametres' };
+    const map = { accueil: 'dashboard', demandes: 'deals', messages: 'messages', contacts: 'contacts', entreprises: 'contacts', devis: 'quotes', paiements: 'payments', relances: 'reminders', catalogue: 'catalogue', agenda: 'agenda', equipe: 'team', parametres: 'settings', compte: 'account', demarrage: 'setup' };
+    const area = { dashboard: 'accueil', deals: 'demandes', messages: 'messages', contacts: 'contacts', quotes: 'devis', payments: 'paiements', reminders: 'relances', catalogue: 'catalogue', agenda: 'agenda', team: 'equipe', settings: 'parametres', setup: 'parametres' };
     let name = map[view] || 'dashboard';
     if (name === 'dashboard' && !can('accueil')) { location.hash = can('agenda') ? '#/agenda' : '#/compte'; return; }
     if (area[name] && !can(area[name])) { location.hash = '#/'; return; }

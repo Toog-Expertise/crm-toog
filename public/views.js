@@ -174,7 +174,7 @@
     const mainAction = !q ? h`<button class="btn btn-primary" id="create-quote">Créer le devis</button>`
       : q.status === 'draft' ? h`<a class="btn btn-primary" href="#/devis/${q.id}">Finir le devis</a>`
       : q.status === 'sent' ? h`<button class="btn btn-primary" id="ask-sign" data-q="${q.id}">Demander la signature</button>` : '';
-    return h`${head(`Demande · ${t.label}`, `${name}${deal.people ? ` · ${deal.people} ${unit}` : ''}`, h`${deal.stage === 'perdu' ? badge('perdu') : ''}<button class="btn btn-ghost" id="edit-deal">Modifier</button>${mainAction}`)}
+    return h`${head(`Demande · ${t.label}`, `${name}${deal.people ? ` · ${deal.people} ${unit}` : ''}`, h`${deal.stage === 'perdu' ? badge('perdu') : ''}${can('messages') && c.email ? h`<button class="btn btn-ghost" id="write">Écrire au client</button>` : ''}<button class="btn btn-ghost" id="edit-deal">Modifier</button>${mainAction}`)}
       <div class="steps">${steps.map((s, i) => h`<button data-stage="${s.key}" class="${s.key === deal.stage ? 'on' : i < idx ? 'done' : ''}">${s.label}</button>`)}</div>
       <div class="grid g3">
         <div class="card"><span class="label">La demande</span><div class="rows">
@@ -263,6 +263,11 @@
     };
     $$('[data-task]', root).forEach((cb) => cb.onchange = () => busy(null, async () => { await api('PUT', `/api/tasks/${cb.dataset.task}`, { done: cb.checked }); reload(); }));
     $('#edit-deal', root).onclick = () => editDeal(id);
+    const w = $('#write', root);
+    if (w) w.onclick = async () => {
+      const r = await modal('Écrire au client', h`<label class="field"><span>Objet</span><input name="subject" required></label><label class="field"><span>Message</span><textarea name="text" rows="6" placeholder="Bonjour, …"></textarea></label><p class="small muted">Sa réponse arrivera dans l'écran Messages, rangée avec cette demande.</p>`, { submit: 'Envoyer' });
+      if (r) busy(w, async () => { const x = await api('POST', `/api/deals/${id}/message`, r); toast(x.status === 'simulated' ? 'Message enregistré (envoi simulé).' : 'Message envoyé.'); reload(); });
+    };
   };
 
   async function manualReminder(dealId) {
@@ -286,6 +291,52 @@
     for (const [k, v] of Object.entries(r)) if (k.startsWith('data.')) { data[k.slice(5)] = v; delete r[k]; }
     busy(null, async () => { await api('PUT', `/api/deals/${id}`, { ...r, data }); toast('Demande enregistrée.'); CRM.refresh(); });
   }
+
+  // ================= Messages : mails reçus des clients et réponses =================
+  V.messages = async ({ parts, params }) => {
+    const key = parts[1] ? decodeURIComponent(parts[1]) : null;
+    const filtre = params.get('filtre') || 'a_traiter';
+    const d = await api('GET', `/api/messages?filtre=${filtre}`);
+    const t = key ? await api('GET', `/api/messages/thread/${encodeURIComponent(key)}`) : null;
+    const when = (ts) => (CRM.now() - ts < 86400e3 ? new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' }).format(ts) : dShort(ts));
+    const name = t ? (t.contact ? [t.contact.first_name, t.contact.last_name].filter(Boolean).join(' ') : '') || t.reply_to : '';
+    return h`${head(`CRM · ${CRM.me.company.name}`, 'Les messages')}
+      ${d.enabled ? '' : h`<div class="banner">La réception des mails n'est pas encore branchée : les réponses des clients n'arrivent pas ici (README, « Boîte de réception »). Les mails envoyés depuis le CRM s'y rangent déjà.</div>`}
+      <div class="tabs">${[['a_traiter', `À traiter · ${d.counts.a_traiter}`], ['traites', 'Traités'], ['tous', 'Tous']].map(([k, l]) => h`<a class="tab ${filtre === k ? 'on' : ''}" href="#/messages?filtre=${k}">${l}</a>`)}</div>
+      <div class="inbox ${t ? 'has-thread' : ''}">
+        <div class="threads">${d.threads.length ? d.threads.map((x) => h`<a class="th ${x.thread === key ? 'on' : ''}" href="#/messages/${encodeURIComponent(x.thread)}?filtre=${filtre}">
+            <span class="th-top"><b>${x.unread ? h`<span class="dot"></span>` : ''}${x.name}</b><span class="muted">${when(x.last_at)}</span></span>
+            <span class="th-subj">${x.subject}</span><span class="th-prev">${x.last_direction === 'out' ? 'Vous : ' : ''}${x.preview}</span>
+            ${x.deal ? h`<span class="small muted">${x.deal.title}</span>` : h`<span class="small muted">expéditeur inconnu</span>`}</a>`) : h`<p class="empty">${filtre === 'a_traiter' ? 'Aucun message à traiter.' : 'Aucun message.'}</p>`}</div>
+        <div class="convo">${t ? h`
+          <div class="convo-head"><div><a class="link small" href="#/messages?filtre=${filtre}">‹ Tous les messages</a><h2 style="margin-top:6px">${name}</h2><span class="muted small">${t.reply_to || t.contact?.email || ''}${t.contact?.phone ? ` · ${t.contact.phone}` : ''}</span></div>
+            <div class="actions">${t.deal ? h`<a class="btn btn-sm btn-ghost" href="#/demandes/${t.deal.id}">Voir la demande</a>` : h`<button class="btn btn-sm btn-ghost" id="to-deal">Créer une demande</button>`}<button class="btn btn-sm btn-ghost" id="done" data-v="${t.done ? '0' : '1'}">${t.done ? 'Rouvrir' : 'Marquer traité'}</button></div></div>
+          ${t.messages.map((m) => h`<div class="msg ${m.direction}"><small>${m.direction === 'in' ? (m.from_name || m.from_addr) : `Vous${m.user_name ? ` (${m.user_name})` : ''}`} · ${dTime(m.created_at)}</small>
+            <div class="bubble"><span class="subj">${m.subject}</span>${m.body}${m.attachments.length ? h`<span style="display:block;margin-top:8px">${m.attachments.map((a) => h`<a class="link small" href="/api/messages/${m.id}/attachments/${a.id}" target="_blank">📎 ${a.filename}</a> `)}</span>` : ''}</div></div>`)}
+          <form class="reply" id="reply-form"><label class="field"><span>Votre réponse à ${t.reply_to || t.contact?.email || ''}</span><textarea name="text" placeholder="Bonjour, …"></textarea></label>
+            <div class="actions" style="justify-content:space-between"><span class="small muted">Envoyée par mail avec votre signature d'entreprise ; la conversation passe en « traité ».</span><button class="btn btn-primary">Envoyer</button></div></form>`
+          : h`<p class="empty">Choisissez une conversation à gauche.</p>`}</div>
+      </div>`;
+  };
+  V.messages.bind = (root, { parts, params }) => {
+    const key = parts[1] ? decodeURIComponent(parts[1]) : null;
+    if (!key) return;
+    const filtre = params.get('filtre') || 'a_traiter';
+    CRM.loadMe().then(() => { const c = $('.nav a[href="#/messages"] .count'); if (c && !CRM.me.unread_messages) c.remove(); else if (c) c.textContent = CRM.me.unread_messages; });
+    $('#reply-form', root).onsubmit = (e) => {
+      e.preventDefault();
+      const text = e.target.text.value.trim();
+      if (!text) return toast('Écrivez votre réponse.', true);
+      busy(e.submitter, async () => {
+        const r = await api('POST', `/api/messages/thread/${encodeURIComponent(key)}/reply`, { text });
+        toast(r.status === 'simulated' ? 'Réponse enregistrée (envoi simulé : Resend non branché).' : r.status === 'failed' ? `Échec de l'envoi : ${r.error}` : 'Réponse envoyée.', r.status === 'failed');
+        CRM.refresh();
+      });
+    };
+    $('#done', root).onclick = (e) => busy(e.target, async () => { await api('POST', `/api/messages/thread/${encodeURIComponent(key)}/done`, { done: e.target.dataset.v === '1' }); location.hash = `#/messages?filtre=${filtre}`; });
+    const td = $('#to-deal', root);
+    if (td) td.onclick = () => busy(td, async () => { const r = await api('POST', `/api/messages/thread/${encodeURIComponent(key)}/deal`, {}); toast('Demande créée.'); location.hash = `#/demandes/${r.id}`; });
+  };
 
   // ================= Contacts et entreprises =================
   V.contacts = async (ctx) => {

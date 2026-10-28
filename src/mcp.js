@@ -19,22 +19,14 @@ const TOOLS = [
   { name: 'voir_demande', area: 'demandes', description: "Détail d'une demande : contact, champs, devis, paiements, relances et historique.", inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
   { name: 'lister_devis', area: 'devis', description: 'Liste les devis, filtrables par statut (draft, sent, signed, cancelled) et par période.', inputSchema: { type: 'object', properties: { statut: { type: 'string' }, depuis: { type: 'string', description: 'date AAAA-MM-JJ' } } } },
   { name: 'lister_paiements', area: 'paiements', description: 'Liste les paiements (pending, paid, refunded…).', inputSchema: { type: 'object', properties: { statut: { type: 'string' } } } },
+  { name: 'lister_messages', area: 'messages', description: 'Liste les conversations avec les clients (mails reçus) : à traiter par défaut, avec le dernier message et la demande liée.', inputSchema: { type: 'object', properties: { filtre: { type: 'string', enum: ['a_traiter', 'traites', 'tous'], default: 'a_traiter' } } } },
   { name: 'chiffres', area: 'accueil', description: 'Chiffres du tableau de bord : demandes, devis envoyés et signés, taux de signature, chiffre d’affaires signé et encaissé, visites du site.', inputSchema: { type: 'object', properties: { periode: { type: 'string', enum: ['semaine', 'mois', 'annee'], default: 'semaine' } } } },
   { name: 'preparer_devis', area: 'devis', description: "Prépare un devis en brouillon pour une demande (lignes du catalogue proposées automatiquement si non fournies). Le devis n'est pas envoyé.", inputSchema: { type: 'object', properties: { demande_id: { type: 'integer' }, lignes: { type: 'array', items: { type: 'object', properties: { libelle: { type: 'string' }, quantite: { type: 'number' }, prix_unitaire_ttc_centimes: { type: 'integer' }, tva: { type: 'number' } } } } }, required: ['demande_id'] } },
   { name: 'preparer_relance', area: 'relances', description: 'Prépare une relance manuelle par mail pour une demande, à une date donnée. Elle reste en pause : une personne la réactive dans le CRM pour qu’elle parte.', inputSchema: { type: 'object', properties: { demande_id: { type: 'integer' }, message: { type: 'string' }, date: { type: 'string', description: 'AAAA-MM-JJTHH:MM (heure de Paris)' } }, required: ['demande_id', 'message'] } },
   { name: 'demander_action', area: 'demandes', description: 'Demande une action sensible (envoyer un devis, rembourser, supprimer une demande). Elle devra être confirmée par une personne dans le CRM (tableau de bord › À confirmer).', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['envoyer_devis', 'rembourser', 'supprimer_demande'] }, devis_id: { type: 'integer' }, paiement_id: { type: 'integer' }, demande_id: { type: 'integer' }, montant_centimes: { type: 'integer' } }, required: ['action'] } },
 ];
 
-function userFromToken(req, pathToken) {
-  const h = req.headers.authorization || '';
-  const token = pathToken || (h.startsWith('Bearer ') ? h.slice(7).trim() : '');
-  if (!token) return null;
-  const row = db.get('SELECT * FROM api_tokens WHERE token_hash = ?', sha256(token));
-  if (!row) return null;
-  const user = db.get('SELECT * FROM users WHERE id = ? AND active = 1', row.user_id);
-  if (user) db.update('api_tokens', row.id, { last_used_at: Date.now() });
-  return user;
-}
+const userFromToken = (req, pathToken) => auth.userFromToken(req, pathToken);
 
 const out = (data) => ({ content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 2) }] });
 
@@ -77,6 +69,9 @@ async function callTool(name, args, user) {
     case 'lister_paiements': {
       const rows = db.all(`SELECT id, deal_id, label, kind, amount_cents, refunded_cents, status, created_at, paid_at FROM payments ${args.statut ? 'WHERE status = ?' : ''} ORDER BY id DESC LIMIT 100`, ...(args.statut ? [args.statut] : []));
       return out(rows.map((x) => ({ ...x, montant: money(x.amount_cents), paye_le: dateTime(x.paid_at) })));
+    }
+    case 'lister_messages': {
+      return out(require('./inbox').threads(args.filtre || 'a_traiter').map((t) => ({ client: t.name, mail: t.email, objet: t.subject, dernier_message: t.preview, recu: dateTime(t.last_at), non_lus: t.unread, demande: t.deal ? `${t.deal.title} (n°${t.deal.id})` : 'expéditeur inconnu', lien: `${config.appUrl}/#/messages/${encodeURIComponent(t.thread)}` })));
     }
     case 'chiffres': {
       const s = await stats.dashboard(args.periode || 'semaine', user);

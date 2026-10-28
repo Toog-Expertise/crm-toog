@@ -259,6 +259,28 @@ table.simple th,table.simple td{text-align:left;padding:7px 8px;border-bottom:1p
 .proof-row span{color:rgba(var(--text-rgb),.7);flex:none}
 .proof-row b{text-align:right;word-break:break-all;font-weight:600}
 
+/* Messages */
+.inbox{display:grid;grid-template-columns:340px minmax(0,1fr);gap:16px;align-items:start}
+.threads{display:flex;flex-direction:column;gap:8px}
+.th{display:block;background:var(--card);border-radius:12px;padding:12px 14px;text-decoration:none;border-left:4px solid transparent}
+.th.on{border-left-color:var(--accent);background:rgba(var(--primary-rgb),.22)}
+.th .th-top{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.th b{font-size:14.5px}
+.th .th-subj{display:block;font-weight:700;font-size:13.5px;margin-top:4px}
+.th .th-prev{display:block;color:rgba(var(--text-rgb),.6);font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);margin-right:6px}
+.convo{background:var(--card);border-radius:16px;padding:20px;min-height:420px}
+.convo-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;border-bottom:1px solid rgba(var(--text-rgb),.12);padding-bottom:14px;margin-bottom:16px}
+.msg{max-width:82%;margin-bottom:14px}
+.msg.out{margin-left:auto}
+.msg .bubble{border-radius:14px;padding:12px 14px;white-space:pre-wrap;font-size:14.5px;background:rgba(var(--text-rgb),.07);overflow-wrap:anywhere}
+.msg.out .bubble{background:rgba(var(--primary-rgb),.35)}
+.msg small{display:block;color:rgba(var(--text-rgb),.6);font-size:12px;margin:0 4px 4px}
+.msg.out small{text-align:right}
+.msg .subj{font-weight:700;display:block;margin-bottom:6px}
+.reply{margin-top:18px;border-top:1px solid rgba(var(--text-rgb),.12);padding-top:14px}
+.reply textarea{min-height:110px}
+
 /* Téléphone */
 @media (max-width:860px){
   h1{font-size:28px}
@@ -280,6 +302,10 @@ table.simple th,table.simple td{text-align:left;padding:7px 8px;border-bottom:1p
   .list-row{grid-template-columns:1fr 1fr!important}
   .list-row>*:first-child{grid-column:1/-1}
   .week{grid-template-columns:1fr}
+  .inbox{grid-template-columns:1fr}
+  .inbox.has-thread .threads{display:none}
+  .inbox:not(.has-thread) .convo{display:none}
+  .msg{max-width:100%}
   .day{min-height:0}
   .demo-badge{bottom:76px}
   .head-actions input,.head-actions select{min-width:0;width:100%}

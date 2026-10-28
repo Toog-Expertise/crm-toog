@@ -17,6 +17,7 @@ const analytics = require('./analytics');
 const importer = require('./importer');
 const rgpd = require('./rgpd');
 const stats = require('./stats');
+const inbox = require('./inbox');
 const google = require('./google');
 const { config } = require('./env');
 const { json, send, PDF_CSP } = require('./http');
@@ -52,6 +53,7 @@ function register(router) {
       stripe_mode: payments.stripeMode(), version: config.version,
       users: db.all('SELECT id, name, role FROM users WHERE active = 1 ORDER BY name'),
       pending_actions: db.get("SELECT COUNT(*) n FROM pending_actions WHERE status = 'pending'").n,
+      unread_messages: inbox.unread(), inbox_enabled: inbox.enabled(),
     });
   });
 
@@ -197,6 +199,30 @@ function register(router) {
   });
   router.post('/api/deals/:id/reminders/cut', area('relances'), (req, res) => { reminders.cut(deals.getDeal(req.params.id).id, req.user); json(res, { ok: true }); });
   router.post('/api/deals/:id/reminders/resume', area('relances'), (req, res) => { reminders.resume(deals.getDeal(req.params.id).id, req.user); json(res, { ok: true }); });
+
+  // --- Messages (mails reçus et réponses) ---
+  router.get('/api/messages', area('messages'), (req, res) => {
+    const f = ['a_traiter', 'traites', 'tous'].includes(req.query.get('filtre')) ? req.query.get('filtre') : 'a_traiter';
+    json(res, { threads: inbox.threads(f), counts: { a_traiter: inbox.threads('a_traiter').length }, enabled: inbox.enabled() });
+  });
+  router.get('/api/messages/thread/:key', area('messages'), (req, res) => json(res, inbox.thread(req.params.key, req.user)));
+  router.post('/api/messages/thread/:key/reply', area('messages'), async (req, res) => json(res, await inbox.reply(req.params.key, req.body, req.user)));
+  router.post('/api/messages/thread/:key/done', area('messages'), (req, res) => { inbox.setDone(req.params.key, req.body.done !== false); json(res, { ok: true }); });
+  router.post('/api/messages/thread/:key/deal', area('messages'), (req, res) => json(res, { id: inbox.toDeal(req.params.key, req.user) }, 201));
+  router.get('/api/messages/:id/attachments/:att', area('messages'), async (req, res) => {
+    res.writeHead(302, { Location: await inbox.attachmentUrl(req.params.id, req.params.att) });
+    res.end();
+  });
+  // Écrire au client depuis sa demande
+  router.post('/api/deals/:id/message', area('messages'), async (req, res) => {
+    const d = deals.getDeal(req.params.id);
+    const c = deals.contactOf(d);
+    if (!c?.email) throw new HttpError(400, "Le contact n'a pas d'adresse mail.");
+    const text = String(req.body.text || '').trim();
+    if (!text) throw new HttpError(400, 'Écrivez le message.');
+    const r = await mail.send({ to: c.email, subject: String(req.body.subject || d.title).slice(0, 300), text, deal_id: d.id, contact_id: c.id, user_id: req.user.id });
+    json(res, r, 201);
+  });
 
   // --- Contacts et entreprises ---
   router.get('/api/contacts', area('contacts'), (req, res) => {
@@ -515,6 +541,7 @@ function register(router) {
     out.mail_templates = Object.fromEntries(Object.keys(settings.MAIL_TEMPLATES).map((k) => [k, settings.mailTemplate(k)]));
     out.app_url = config.appUrl;
     out.service_account = google.email();
+    out.site_api = Boolean(config.siteApiKey);
     json(res, out);
   });
   router.put('/api/settings/:key', admin, (req, res) => {
@@ -560,6 +587,7 @@ function register(router) {
       google: { ok: Boolean(config.google.clientId && config.google.clientSecret), label: config.google.clientId ? 'active' : 'non branchée (code par mail seulement)' },
       stripe: { ok: stripe.connected, label: stripe.label + (stripe.connected && !stripe.webhook ? ' · webhook à créer' : ''), mode: stripe.mode, error: stripe.error },
       resend: { ok: mail.enabled() && Boolean(config.resend.webhookSecret), label: mail.enabled() ? (config.resend.webhookSecret ? 'branché, statuts reçus' : 'branché · webhook à créer') : 'non branché (mails simulés)' },
+      inbox: { ok: Boolean(config.resend.inbound), label: config.resend.inbound ? `réception sur ${config.resend.inbound}` : 'réception non branchée (MAIL_INBOUND)' },
       analytics: ga, calendar: cal,
       turnstile: { ok: Boolean(config.turnstile.siteKey && config.turnstile.secret), label: config.turnstile.secret ? 'actif' : 'non branché (case invisible et limite par minute seulement)' },
       site: { ok: Boolean(settings.get('integrations').site_url), label: settings.get('integrations').site_url || 'adresse du site à renseigner' },

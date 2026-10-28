@@ -70,6 +70,11 @@ deals.setStage(d4, 'devis_envoye');
 require('../src/reminders').onQuoteSent(quotes.getQuote(q.id));
 activity.log({ deal_id: d4, kind: 'quote', text: `Devis ${q.number} envoyé (données d'exemple)` });
 
+// Deux mails reçus, pour voir l'écran Messages
+const inbox = require('../src/inbox');
+inbox.receive({ email_id: 'demo-1', from: 'Julie TEST <julie.test@exemple.fr>', to: ['reponses@exemple.fr'], subject: 'Re: Votre demande EVJF', text: "Bonjour,\n\nC'est bon pour nous, on serait 9. Est-ce qu'on peut avoir une salle à part pour le gâteau ?\n\nMerci,\nJulie\n\nLe 26 oct. 2026 à 10:12, Bowling a écrit :\n> Bonjour Julie…" });
+inbox.receive({ email_id: 'demo-2', from: 'Marc TEST <marc.test@exemple.fr>', to: ['reponses@exemple.fr'], subject: 'Privatisation pour 30 personnes', text: 'Bonjour,\n\nNous cherchons un lieu pour un pot de départ un vendredi soir, 30 personnes. Avez-vous des disponibilités en décembre ?\n\nMarc' });
+
 settings.set('demo', true);
 console.log(`Données TEST ajoutées : 5 demandes, 1 devis envoyé (${q.number}), catalogue de prix d'exemple.`);
 console.log('Pour tout retirer avant la vraie mise en service : npm run demo -- --supprimer');

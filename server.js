@@ -76,9 +76,9 @@ router.post('/api/stripe/webhook', async (req, res) => {
   await payments.handleWebhook(JSON.parse(req.raw.toString('utf8')));
   json(res, { received: true });
 });
-router.post('/api/resend/webhook', (req, res) => {
+router.post('/api/resend/webhook', async (req, res) => {
   if (!mail.verifyWebhook(req.headers, req.raw)) return json(res, { error: 'Signature invalide' }, 400);
-  mail.handleWebhook(JSON.parse(req.raw.toString('utf8')));
+  await mail.handleWebhook(JSON.parse(req.raw.toString('utf8')));
   json(res, { received: true });
 });
 

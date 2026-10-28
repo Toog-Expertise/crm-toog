@@ -297,3 +297,47 @@ test('paiement au montant réel encaissé par Stripe', async () => {
   await call('POST', '/api/stripe/webhook', ev, { who: 'stripe', headers: { 'Stripe-Signature': stripeSig(ev) } });
   assert.equal(db.get('SELECT amount_cents FROM payments WHERE id = ?', created.data.id).amount_cents, 2500);
 });
+
+const svix = (body) => {
+  const id = 'msg_' + Math.random().toString(36).slice(2), ts = String(Math.floor(Date.now() / 1000));
+  const sig = crypto.createHmac('sha256', Buffer.from(RESEND_SECRET.slice(6), 'base64')).update(`${id}.${ts}.${body}`).digest('base64');
+  return { 'svix-id': id, 'svix-timestamp': ts, 'svix-signature': `v1,${sig}` };
+};
+
+test('messages : mail reçu rangé dans la demande, relances arrêtées, réponse', async () => {
+  const d = db.get("SELECT * FROM deals WHERE type = 'entreprise' ORDER BY id LIMIT 1");
+  await call('POST', `/api/deals/${d.id}/reminders/resume`);
+  const before = db.get("SELECT COUNT(*) n FROM reminders WHERE deal_id = ? AND status = 'scheduled'", d.id).n;
+  const body = JSON.stringify({ type: 'email.received', data: { email_id: 'in_1', from: 'Paul TEST <paul.test@exemple.fr>', to: [`reponses+${d.id}@exemple.fr`], subject: 'Re: Votre devis', text: 'Bonjour,\nOn valide, merci !\n\nLe 28 oct. 2026, Bowling a écrit :\n> Voici votre devis' } });
+  assert.equal((await call('POST', '/api/resend/webhook', body, { who: 'resend', headers: svix(body) })).status, 200);
+  const m = db.get("SELECT * FROM messages WHERE provider_id = 'in_1'");
+  assert.equal(m.thread, `d${d.id}`);
+  assert.equal(m.body, 'Bonjour,\nOn valide, merci !');
+  assert.ok(before === 0 || db.get("SELECT COUNT(*) n FROM reminders WHERE deal_id = ? AND status = 'scheduled' AND rule IN ('quote_unsigned', 'deposit_unpaid', 'no_answer')", d.id).n === 0);
+  const list = await call('GET', '/api/messages');
+  assert.ok(list.data.threads.some((t) => t.thread === `d${d.id}` && t.unread === 1));
+  assert.equal((await call('GET', '/api/messages', undefined, { who: 'accueil' })).status, 200);
+  const r = await call('POST', `/api/messages/thread/d${d.id}/reply`, { text: 'Parfait, à bientôt.' });
+  assert.equal(r.status, 200);
+  const sent = lastMail('paul.test@exemple.fr', 'message');
+  assert.match(sent.subject, /^Re: Votre devis|^Re : /);
+  assert.ok(!(await call('GET', '/api/messages')).data.threads.some((t) => t.thread === `d${d.id}`), 'traité après réponse');
+  // Rejoué : pas de doublon
+  await call('POST', '/api/resend/webhook', body, { who: 'resend', headers: svix(body) });
+  assert.equal(db.get("SELECT COUNT(*) n FROM messages WHERE provider_id = 'in_1'").n, 1);
+});
+
+test('messages : expéditeur inconnu transformé en demande', async () => {
+  const body = JSON.stringify({ type: 'email.received', data: { email_id: 'in_2', from: 'Inconnu TEST <inconnu.test@exemple.org>', to: ['reponses@exemple.fr'], subject: 'Une question', text: 'Ouvert le dimanche ?' } });
+  await call('POST', '/api/resend/webhook', body, { who: 'resend', headers: svix(body) });
+  const r = await call('POST', `/api/messages/thread/${encodeURIComponent('einconnu.test@exemple.org')}/deal`, {});
+  assert.equal(r.status, 201);
+  assert.equal(db.get("SELECT thread FROM messages WHERE provider_id = 'in_2'").thread, `d${r.data.id}`);
+});
+
+test('API : jeton personnel en Bearer, avec les droits de la personne', async () => {
+  const tok = (await call('POST', '/api/tokens', { label: 'Outil TEST' }, { who: 'accueil' })).data.token;
+  assert.equal((await call('GET', '/api/deals', undefined, { who: 'outil', headers: { Authorization: `Bearer ${tok}` } })).status, 200);
+  assert.equal((await call('GET', '/api/settings', undefined, { who: 'outil', headers: { Authorization: `Bearer ${tok}` } })).status, 403);
+  assert.equal((await call('GET', '/api/deals', undefined, { who: 'outil', headers: { Authorization: 'Bearer faux' } })).status, 401);
+});

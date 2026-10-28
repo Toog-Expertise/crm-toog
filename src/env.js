@@ -33,7 +33,7 @@ const config = {
   serviceAccount: env('GOOGLE_SERVICE_ACCOUNT_JSON'),
   ga4Property: env('GA4_PROPERTY_ID'),
   stripe: { publishable: env('STRIPE_PUBLISHABLE_KEY'), secret: env('STRIPE_SECRET_KEY'), webhookSecret: env('STRIPE_WEBHOOK_SECRET') },
-  resend: { key: env('RESEND_API_KEY'), webhookSecret: env('RESEND_WEBHOOK_SECRET'), from: env('MAIL_FROM'), replyTo: env('MAIL_REPLY_TO') },
+  resend: { key: env('RESEND_API_KEY'), webhookSecret: env('RESEND_WEBHOOK_SECRET'), from: env('MAIL_FROM'), replyTo: env('MAIL_REPLY_TO'), inbound: env('MAIL_INBOUND').toLowerCase() },
   turnstile: { siteKey: env('TURNSTILE_SITE_KEY'), secret: env('TURNSTILE_SECRET_KEY') },
   siteApiKey: env('SITE_API_KEY'),
   backupRemote: env('BACKUP_REMOTE'),

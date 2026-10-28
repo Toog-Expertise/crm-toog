@@ -231,6 +231,27 @@ const MIGRATIONS = [
   CREATE TABLE code_failures (key TEXT NOT NULL, at INTEGER NOT NULL);
   CREATE INDEX code_failures_key ON code_failures(key, at);
   `,
+  // 3 : messagerie (mails reçus des clients et réponses), regroupés par conversation
+  `
+  CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    thread TEXT NOT NULL,                          -- d<demande> | c<contact> | e<adresse>
+    direction TEXT NOT NULL,                       -- in | out
+    deal_id INTEGER REFERENCES deals(id) ON DELETE SET NULL,
+    contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    from_addr TEXT, from_name TEXT, to_addr TEXT,
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',                 -- texte, sans l'historique cité
+    full_body TEXT,                                -- texte complet
+    provider_id TEXT, message_id TEXT,
+    attachments TEXT,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    read_at INTEGER, done_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX messages_thread ON messages(thread, created_at);
+  CREATE UNIQUE INDEX messages_provider ON messages(provider_id) WHERE provider_id IS NOT NULL;
+  `,
 ];
 
 let db;

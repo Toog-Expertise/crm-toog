@@ -58,9 +58,21 @@ function startSession(res, user, req) {
   setCookie(res, COOKIE, token, { secure: secure(), maxAge: SESSION_DAYS * 86400 });
 }
 
+// Jeton personnel (Paramètres › MCP et API) : utilisable par Claude (MCP) et par l'API, avec les droits de la personne
+function userFromToken(req, pathToken) {
+  const h = req.headers.authorization || '';
+  const token = pathToken || (h.startsWith('Bearer ') ? h.slice(7).trim() : '');
+  if (!token) return null;
+  const row = db.get('SELECT * FROM api_tokens WHERE token_hash = ?', sha256(token));
+  if (!row) return null;
+  const user = db.get('SELECT * FROM users WHERE id = ? AND active = 1', row.user_id);
+  if (user) db.update('api_tokens', row.id, { last_used_at: Date.now() });
+  return user;
+}
+
 function currentUser(req) {
   const token = parseCookies(req)[COOKIE];
-  if (!token) return null;
+  if (!token) return (req.url || '').startsWith('/api/') ? userFromToken(req) : null;
   const s = db.get('SELECT * FROM sessions WHERE id = ?', sha256(token));
   if (!s || s.expires_at < Date.now()) return null;
   const u = db.get('SELECT * FROM users WHERE id = ? AND active = 1', s.user_id);
@@ -204,4 +216,4 @@ function register(router) {
   });
 }
 
-module.exports = { register, currentUser, requireUser, requireArea, can, admit, COOKIE };
+module.exports = { userFromToken, register, currentUser, requireUser, requireArea, can, admit, COOKIE };

@@ -63,24 +63,36 @@ const enabled = () => Boolean(config.resend.key && config.resend.from);
 // Hors production, les derniers mails simulés restent en mémoire (tests automatiques)
 const outbox = [];
 
+// Adresse de réponse : avec la boîte de réception (MAIL_INBOUND), chaque demande a la sienne
+// (reponses+123@…), pour que la réponse du client arrive dans la bonne conversation.
+function replyAddress(dealId) {
+  const inbound = config.resend.inbound;
+  if (!inbound) return config.resend.replyTo || undefined;
+  const [local, domain] = inbound.split('@');
+  return dealId ? `${local}+${dealId}@${domain}` : inbound;
+}
+
 // Envoie un mail et le note dans l'historique. Ne lève pas d'erreur : un mail en échec est visible dans la fiche.
-async function send({ to, template, vars = {}, deal_id = null, contact_id = null, attachments = [], replyTo, user_id = null, quiet = false }) {
-  const { subject, text, html } = render(template, vars);
+// template : un modèle des paramètres ; ou subject + text pour un message écrit à la main (réponse).
+async function send({ to, template, vars = {}, subject: customSubject, text: customText, headers, deal_id = null, contact_id = null, attachments = [], replyTo, user_id = null, quiet = false }) {
+  const r0 = template ? render(template, vars) : { subject: customSubject, text: customText, html: layout(customText) };
+  const { subject, text, html } = r0;
   const now = settings.now();
-  const id = db.insert('emails', { deal_id, contact_id, to_addr: to, template, subject, status: 'queued', created_at: now, updated_at: now });
+  const id = db.insert('emails', { deal_id, contact_id, to_addr: to, template: template || 'message', subject, status: 'queued', created_at: now, updated_at: now });
   let status = 'sent', provider_id = null, error = null;
   if (!enabled()) {
     status = 'simulated';
-    if (!config.production) { outbox.push({ to, template, subject, text, attachments: attachments.length }); if (outbox.length > 100) outbox.shift(); }
+    if (!config.production) { outbox.push({ to, template: template || 'message', subject, text, attachments: attachments.length }); if (outbox.length > 100) outbox.shift(); }
     // Tant que Resend n'est pas branché, le mail (et donc un code de connexion) s'affiche dans les journaux
     console.log(`\n--- Mail simulé à ${to} ---\nObjet : ${subject}\n${text}\n${attachments.length ? `[${attachments.length} pièce(s) jointe(s)]\n` : ''}---\n`);
   } else {
     try {
       const body = {
         from: config.resend.from, to: [to], subject, html, text,
-        reply_to: replyTo || config.resend.replyTo || undefined,
+        reply_to: replyTo || (contact_id ? replyAddress(deal_id) : config.resend.replyTo) || undefined,
+        headers: headers || undefined,
         attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString('base64') })),
-        tags: [{ name: 'template', value: template }],
+        tags: [{ name: 'template', value: template || 'message' }],
       };
       const r = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -97,8 +109,17 @@ async function send({ to, template, vars = {}, deal_id = null, contact_id = null
     }
   }
   db.update('emails', id, { status, provider_id, error, updated_at: settings.now() });
+  // Les mails envoyés au client apparaissent aussi dans sa conversation (écran Messages), sauf les codes
+  if (contact_id && template !== 'code_signature') {
+    db.insert('messages', {
+      thread: deal_id ? `d${deal_id}` : `c${contact_id}`, direction: 'out', deal_id, contact_id,
+      from_addr: config.resend.from || null, to_addr: to, subject, body: text, user_id,
+      read_at: now, done_at: now, created_at: now,
+    });
+  }
   if (deal_id && !quiet) {
-    activity.log({ deal_id, contact_id, user_id, kind: 'mail', text: `${settings.mailTemplate(template).label} envoyé à ${to} · ${STATUS_LABEL[status]}`, meta: { email_id: id } });
+    const label = template ? settings.mailTemplate(template).label : `Message « ${subject} »`;
+    activity.log({ deal_id, contact_id, user_id, kind: 'mail', text: `${label} envoyé à ${to} · ${STATUS_LABEL[status]}`, meta: { email_id: id } });
   }
   return { id, status, error };
 }
@@ -121,7 +142,8 @@ const EVENT_STATUS = {
 };
 const RANK = { queued: 0, sent: 1, delayed: 1, delivered: 2, opened: 3, clicked: 4, bounced: 5, complained: 5, failed: 5 };
 
-function handleWebhook(event) {
+async function handleWebhook(event) {
+  if (event.type === 'email.received') return require('./inbox').receive(event.data || {});
   const status = EVENT_STATUS[event.type];
   const pid = event.data?.email_id;
   if (!status || !pid) return;
@@ -134,4 +156,4 @@ function handleWebhook(event) {
   }
 }
 
-module.exports = { send, render, layout, verifyWebhook, handleWebhook, enabled, STATUS_LABEL, outbox };
+module.exports = { replyAddress, send, render, layout, verifyWebhook, handleWebhook, enabled, STATUS_LABEL, outbox };

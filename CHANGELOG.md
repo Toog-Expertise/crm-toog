@@ -2,6 +2,12 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.1.0 · 28 octobre 2026
+
+- Messages : les mails des clients arrivent dans le CRM (réception Resend), rangés avec leur demande ; on y répond depuis le CRM. Une réponse du client arrête ses relances. Bouton « Écrire au client » sur chaque demande.
+- Paramètres › MCP et API : jetons personnels pour Claude (MCP) et pour l'API, avec les droits de la personne, et la liste des adresses utiles pour brancher d'autres outils.
+- Connexion : lien direct dans le mail du code.
+
 ## 1.0.1 · 28 octobre 2026
 
 - Installation : si nginx sert déjà un site sur le serveur (un WordPress, par exemple), `install.sh` ajoute le CRM à côté, avec nginx et certbot, au lieu d'installer Caddy. Les autres sites ne sont pas touchés.

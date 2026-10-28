@@ -309,31 +309,41 @@
     $$('[data-active]', root).forEach((b) => b.onclick = () => busy(b, async () => { await api('PUT', `/api/users/${b.dataset.active}`, { active: b.dataset.v === '1' }); CRM.refresh(); }));
   };
 
+  // Jetons personnels : Claude (MCP) et API, avec les droits de la personne
+  function tokensCard(tokens) {
+    return h`<div class="card"><span class="label">Mes jetons (Claude et API)</span>
+      <p class="small">Un jeton personnel donne accès au CRM avec vos droits : à Claude (MCP) ou à un autre outil (API). Les actions sensibles (envoyer, rembourser, supprimer) demandées par Claude restent à confirmer ici.</p>
+      <div class="rows">${tokens.length ? tokens.map((t) => h`<div class="row"><span>${t.label} · créé le ${dShort(t.created_at)}${t.last_used_at ? ` · utilisé le ${dShort(t.last_used_at)}` : ' · jamais utilisé'}</span><button class="act danger" data-del="${t.id}">Révoquer</button></div>`) : h`<p class="empty">Aucun jeton.</p>`}</div>
+      <button class="btn btn-primary" id="new-token" style="margin-top:12px">Créer un jeton</button></div>`;
+  }
+  function bindTokens(root) {
+    $('#new-token', root).onclick = async (e) => {
+      const v = await modal('Nouveau jeton', h`<label class="field"><span>Pour quel outil ?</span><input name="label" value="Claude" required placeholder="ex. Claude, Zapier, logiciel de caisse"></label>`, { submit: 'Créer' });
+      if (!v) return;
+      busy(e.target, async () => {
+        const r = await api('POST', '/api/tokens', { label: v.label });
+        await modal('Votre jeton', h`<p class="small">Copiez-le maintenant : il ne sera plus affiché. Ne le partagez pas : il donne accès au CRM avec vos droits.</p>
+          <p class="small"><b>Pour Claude (MCP)</b> : cette adresse</p><div class="copy"><code>${r.url}</code><button type="button" class="btn btn-sm btn-ghost" data-copy="${r.url}">Copier</button></div>
+          <p class="small"><b>Pour l'API</b> : l'en-tête</p><div class="copy"><code>Authorization: Bearer ${r.token}</code><button type="button" class="btn btn-sm btn-ghost" data-copy="${r.token}">Copier</button></div>`, { submit: null, onOpen: (f) => $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy)) });
+        CRM.refresh();
+      });
+    };
+    $$('[data-del]', root).forEach((b) => b.onclick = () => busy(b, async () => { if (await confirmBox('Révoquer le jeton', 'L’outil qui l’utilise n’aura plus accès au CRM.', { submit: 'Révoquer', danger: true })) { await api('DELETE', `/api/tokens/${b.dataset.del}`); CRM.refresh(); } }));
+  }
+
   // ================= Mon compte (jeton MCP) =================
   V.account = async () => {
     const tokens = await api('GET', '/api/tokens');
     return h`${head('Mon compte', CRM.me.user.name)}
       <div class="grid g2">
         <div class="card"><span class="label">Mon accès</span><div class="rows"><div class="row"><span>Adresse</span><b>${CRM.me.user.email}</b></div><div class="row"><span>Rôle</span><b>${CRM.me.user.role_label}</b></div><div class="row"><span>Version du CRM</span><b>${CRM.me.version}</b></div></div></div>
-        <div class="card"><span class="label">Claude (MCP)</span>
-          <p class="small">Un jeton personnel pour interroger le CRM depuis Claude : lire les demandes, devis, paiements et chiffres ; préparer un devis ou une relance. Les actions sensibles (envoyer, rembourser, supprimer) restent à confirmer ici, dans le CRM.</p>
-          <div class="rows">${tokens.map((t) => h`<div class="row"><span>${t.label} · créé le ${dShort(t.created_at)}${t.last_used_at ? ` · utilisé le ${dShort(t.last_used_at)}` : ''}</span><button class="act danger" data-del="${t.id}">Révoquer</button></div>`)}</div>
-          <button class="btn btn-primary" id="new-token" style="margin-top:12px">Créer un jeton</button>
-          <p class="small muted" style="margin-top:12px">Dans Claude : Paramètres › Connecteurs › Ajouter un connecteur personnalisé › collez l'adresse donnée à la création du jeton.</p>
-        </div>
+        ${tokensCard(tokens)}
       </div>`;
   };
-  V.account.bind = (root) => {
-    $('#new-token', root).onclick = (e) => busy(e.target, async () => {
-      const r = await api('POST', '/api/tokens', { label: 'Claude' });
-      await modal('Votre adresse MCP', h`<p class="small">Copiez-la maintenant : elle ne sera plus affichée. Elle donne accès au CRM avec vos droits : ne la partagez pas.</p><div class="copy"><code>${r.url}</code></div>`, { submit: null, onOpen: (f) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-primary'; b.textContent = 'Copier'; b.onclick = () => copy(r.url); $('.actions', f).appendChild(b); } });
-      CRM.refresh();
-    });
-    $$('[data-del]', root).forEach((b) => b.onclick = () => busy(b, async () => { await api('DELETE', `/api/tokens/${b.dataset.del}`); CRM.refresh(); }));
-  };
+  V.account.bind = (root) => bindTokens(root);
 
   // ================= Paramètres =================
-  const TABS = [['entreprise', 'Entreprise'], ['couleurs', 'Couleurs'], ['acces', 'Accès'], ['devis', 'Devis et paiements'], ['mails', 'Mails et relances'], ['formulaire', 'Formulaire et site'], ['integrations', 'Intégrations']];
+  const TABS = [['entreprise', 'Entreprise'], ['couleurs', 'Couleurs'], ['acces', 'Accès'], ['devis', 'Devis et paiements'], ['mails', 'Mails et relances'], ['formulaire', 'Formulaire et site'], ['integrations', 'Intégrations'], ['api', 'MCP et API']];
   let S = null;
   const COLOR_LABELS = { primary: 'principale', secondary: 'secondaire', accent: 'accent', background: 'fond', card: 'cartes', text: 'texte' };
 
@@ -421,13 +431,29 @@
       const st = await api('GET', '/api/integrations');
       const line = (l, s) => h`<div class="row"><span>${l}</span><span class="${s.ok ? 'status-ok' : 'status-ko'}">${s.ok ? '✓ ' : ''}${s.label}</span></div>`;
       body = h`<div class="grid g2"><div class="card"><span class="label">Les intégrations</span><div class="rows">
-        ${line('Connexion Google', st.google)}${line('Stripe', st.stripe)}${line('Resend', st.resend)}${line('Google Analytics', st.analytics)}${line('Google Agenda', st.calendar)}${line('Cloudflare Turnstile', st.turnstile)}${line('Site', st.site)}</div>
+        ${line('Connexion Google', st.google)}${line('Stripe', st.stripe)}${line('Resend', st.resend)}${line('Boîte de réception', st.inbox)}${line('Google Analytics', st.analytics)}${line('Google Agenda', st.calendar)}${line('Cloudflare Turnstile', st.turnstile)}${line('Site', st.site)}</div>
         <p class="small accent-text" style="margin-top:12px">Les clés restent dans le .env du serveur : jamais affichées ici.</p>
         ${st.stripe.error ? h`<p class="small error">Stripe : ${st.stripe.error}</p>` : ''}${st.analytics.error ? h`<p class="small error">Analytics : ${st.analytics.error}</p>` : ''}${st.calendar.error ? h`<p class="small error">Agenda : ${st.calendar.error}</p>` : ''}
         <label class="switch" style="margin-top:16px"><input type="checkbox" id="demo" ${S.demo ? 'checked' : ''}><i></i>Afficher le badge « Données d'exemple »</label></div>
         <div class="card"><span class="label">Adresses à recopier</span>
-        ${[['URI de redirection Google', st.urls.google_redirect], ['Webhook Stripe', st.urls.stripe_webhook], ['Webhook Resend', st.urls.resend_webhook], ['Script du site', st.urls.embed], ['MCP (jeton dans Mon compte)', st.urls.mcp]].map(([l, u]) => h`<p class="small"><b>${l}</b></p><div class="copy"><code>${u}</code><button class="btn btn-sm btn-ghost" data-copy="${u}">Copier</button></div>`)}
+        ${[['URI de redirection Google', st.urls.google_redirect], ['Webhook Stripe', st.urls.stripe_webhook], ['Webhook Resend', st.urls.resend_webhook], ['Script du site', st.urls.embed], ['MCP (jeton dans MCP et API)', st.urls.mcp]].map(([l, u]) => h`<p class="small"><b>${l}</b></p><div class="copy"><code>${u}</code><button class="btn btn-sm btn-ghost" data-copy="${u}">Copier</button></div>`)}
         ${st.service_account ? h`<p class="small"><b>Compte de service Google</b> (à ajouter en lecteur dans Analytics et en éditeur de l'agenda)</p><div class="copy"><code>${st.service_account}</code></div>` : ''}</div></div>`;
+    } else if (tab === 'api') {
+      const tokens = await api('GET', '/api/tokens');
+      const base = S.app_url;
+      const ex = [['GET', '/api/deals', 'les demandes (filtres : stage, source, type, q)'], ['GET', '/api/deals/{id}', 'une demande complète'], ['POST', '/api/deals', 'créer une demande'], ['GET', '/api/contacts', 'les contacts'], ['GET', '/api/quotes', 'les devis'], ['GET', '/api/payments', 'les paiements'], ['GET', '/api/messages', 'les messages à traiter'], ['GET', '/api/dashboard?periode=mois', 'les chiffres du tableau de bord']];
+      body = h`<div class="grid g2">${tokensCard(tokens)}
+        <div class="card"><span class="label">Brancher d'autres outils</span>
+          <p class="small"><b>Claude (MCP)</b> · Claude › Paramètres › Connecteurs › Ajouter un connecteur personnalisé › l'adresse donnée à la création du jeton :</p>
+          <div class="copy"><code>${base}/mcp/&lt;jeton&gt;</code></div>
+          <p class="small" style="margin-top:14px"><b>API</b> · pour un autre logiciel (caisse, Zapier, Make, tableur…). Adresse de base et en-tête :</p>
+          <div class="copy"><code>${base}/api</code></div><div class="copy" style="margin-top:6px"><code>Authorization: Bearer &lt;jeton&gt;</code></div>
+          <table class="simple" style="margin-top:10px">${ex.map(([m, p, l]) => h`<tr><td><code>${m}</code></td><td><code>${p}</code></td><td>${l}</td></tr>`)}</table>
+          <p class="small muted">Réponses en JSON. Le jeton a les droits de la personne qui l'a créé : un jeton « accueil » ne voit pas les paramètres.</p>
+          <p class="small" style="margin-top:14px"><b>Formulaires du site</b> · un site peut envoyer ses demandes à <code>${base}/api/public/demandes</code> avec l'en-tête <code>X-Api-Key</code> : ${S.site_api ? h`<span class="status-ok">clé réglée dans le .env</span>` : h`<span class="status-ko">clé SITE_API_KEY à mettre dans le .env</span>`}.</p>
+          <p class="small"><b>Notifications reçues</b> · Stripe : <code>${base}/api/stripe/webhook</code> · Resend : <code>${base}/api/resend/webhook</code></p>
+          <p class="small muted">Un nouvel outil à brancher ? Donnez sa documentation à Claude : « Branche [outil] au CRM avec un jeton de Paramètres › MCP et API ».</p>
+        </div></div>`;
     }
     const saveBtn = ['entreprise', 'couleurs', 'acces', 'devis', 'mails', 'formulaire'].includes(tab);
     return h`${head('Paramètres', 'Votre entreprise', saveBtn ? h`<button class="btn btn-primary" id="save">Enregistrer</button>` : '')}
@@ -520,6 +546,7 @@
         await done('Types enregistrés.');
       });
     }
+    if (tab === 'api') bindTokens(root);
     if (tab === 'integrations') {
       $('#demo', root).onchange = (e) => busy(null, async () => { await put('demo', e.target.checked); await done(); });
     }

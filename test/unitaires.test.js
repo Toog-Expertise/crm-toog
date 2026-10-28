@@ -87,3 +87,9 @@ test('couleurs : contraste refusé et proposition lisible', () => {
   assert.equal(settings.checkColors(fixed).length, 0);
   assert.equal(settings.checkColors(settings.DEFAULTS.colors).length, 0);
 });
+
+test('écrans : aucun fichier JavaScript en erreur de syntaxe', () => {
+  const { execFileSync } = require('node:child_process');
+  const dir = path.join(__dirname, '..', 'public');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) execFileSync(process.execPath, ['--check', path.join(dir, f)]);
+});
