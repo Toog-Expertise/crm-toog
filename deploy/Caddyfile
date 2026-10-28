@@ -1,0 +1,8 @@
+# CRM Toog : HTTPS automatique (Let's Encrypt) et proxy vers le CRM
+__DOMAIN__ {
+	encode gzip
+	reverse_proxy 127.0.0.1:__PORT__
+	request_body {
+		max_size 13MB
+	}
+}

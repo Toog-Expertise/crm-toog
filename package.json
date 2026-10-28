@@ -1,0 +1,19 @@
+{
+  "name": "crm-toog",
+  "version": "1.0.0",
+  "description": "CRM commun Toog Expertise : demandes, devis, signature électronique, paiements Stripe, relances.",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js",
+    "admin": "node --disable-warning=ExperimentalWarning scripts/admin.js",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
+    "check": "node --disable-warning=ExperimentalWarning scripts/check.js"
+  }
+}

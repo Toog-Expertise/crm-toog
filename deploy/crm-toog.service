@@ -1,0 +1,26 @@
+[Unit]
+Description=CRM Toog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning __APP_DIR__/server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__APP_DIR__/data __APP_DIR__/backups
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
