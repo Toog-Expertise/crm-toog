@@ -2,6 +2,11 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.0.1 · 28 octobre 2026
+
+- Installation : si nginx sert déjà un site sur le serveur (un WordPress, par exemple), `install.sh` ajoute le CRM à côté, avec nginx et certbot, au lieu d'installer Caddy. Les autres sites ne sont pas touchés.
+- Écrans : les cartes du tableau de bord passent à la ligne sur un écran moyen.
+
 ## 1.0.0 · 28 octobre 2026
 
 Première version du CRM commun.

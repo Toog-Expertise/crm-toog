@@ -81,7 +81,7 @@ sudo ./install.sh
 Le script vous demande l'adresse du CRM, le domaine autorisé et l'adresse du gérant. Il installe ensuite, dans l'ordre :
 
 - Node.js 24 ;
-- Caddy, qui gère le HTTPS gratuit et automatique ;
+- Caddy, qui gère le HTTPS gratuit et automatique (ou nginx et certbot, si nginx est déjà là) ;
 - un utilisateur système `crm` ;
 - le fichier `.env`, avec un secret de session généré ;
 - la base vide et le premier gérant ;
@@ -89,6 +89,8 @@ Le script vous demande l'adresse du CRM, le domaine autorisé et l'adresse du g�
 - la sauvegarde de chaque nuit à 3 h.
 
 Le script peut être relancé sans risque : il garde le `.env` et la base existants.
+
+Si nginx sert déjà un site sur le serveur (un WordPress, par exemple), le script s'en sert au lieu d'installer Caddy. Il ajoute alors le CRM comme un site de plus, avec son propre certificat (certbot), sans toucher aux autres sites.
 
 ### 5. La première connexion et l'assistant de démarrage
 

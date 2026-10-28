@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CRM Toog : installation sur un VPS Ubuntu neuf (22.04 ou 24.04), en root.
-# Installe Node.js 24, Caddy (HTTPS automatique), le service, la sauvegarde de nuit et le premier gérant.
+# Installe Node.js 24, le HTTPS (Caddy, ou nginx + certbot si nginx sert déjà d'autres sites),
+# le service, la sauvegarde de nuit et le premier gérant.
 #
 #   git clone git@github.com:Toog-Expertise/crm-toog.git /opt/crm-toog && cd /opt/crm-toog && sudo ./install.sh
 #
@@ -34,19 +35,26 @@ if [ -z "$IP_DNS" ] || [ "$IP_DNS" != "$IP_PUBLIQUE" ]; then
   [ "$GO" = "oui" ] || exit 1
 fi
 
-say "3/8 · Paquets système (Node.js 24, Caddy, sqlite3, rsync)"
+# Si nginx sert déjà un site (WordPress…), le CRM s'ajoute à côté, sans toucher aux autres sites
+WEB=caddy
+if systemctl is-active --quiet nginx; then WEB=nginx; fi
+echo "Serveur web : $WEB"
+
+say "3/8 · Paquets système (Node.js 24, HTTPS, sqlite3, rsync)"
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https rsync sqlite3 tar >/dev/null
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null
   apt-get install -y -qq nodejs >/dev/null
 fi
-if ! command -v caddy >/dev/null; then
+if [ "$WEB" = nginx ]; then
+  command -v certbot >/dev/null || apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+elif ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
   apt-get update -qq && apt-get install -y -qq caddy >/dev/null
 fi
-echo "Node $(node -v) · $(caddy version | cut -d' ' -f1)"
+echo "Node $(node -v) · $([ "$WEB" = nginx ] && nginx -v 2>&1 | cut -d' ' -f3 || caddy version | cut -d' ' -f1)"
 
 say "4/8 · Utilisateur système et droits"
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
@@ -78,14 +86,22 @@ say "7/8 · Le service, le HTTPS et la sauvegarde de nuit"
 sed -e "s#__APP_DIR__#$APP_DIR#g" -e "s#__USER__#$APP_USER#g" "$APP_DIR/deploy/crm-toog.service" > "/etc/systemd/system/$SERVICE.service"
 sed -e "s#__APP_DIR__#$APP_DIR#g" -e "s#__USER__#$APP_USER#g" "$APP_DIR/deploy/crm-toog-backup.service" > "/etc/systemd/system/$SERVICE-backup.service"
 cp "$APP_DIR/deploy/crm-toog-backup.timer" "/etc/systemd/system/$SERVICE-backup.timer"
-mkdir -p /etc/caddy/sites
-sed -e "s#__DOMAIN__#$DOMAIN#g" -e "s#__PORT__#$PORT#g" "$APP_DIR/deploy/Caddyfile" > "/etc/caddy/sites/$SERVICE.caddy"
-grep -q 'import sites/\*' /etc/caddy/Caddyfile 2>/dev/null || printf '\nimport sites/*\n' >> /etc/caddy/Caddyfile
-# Le Caddyfile par défaut sert une page sur le port 80 : on la retire si elle est encore là
-sed -i '/^:80 {/,/^}/d' /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl enable --now "$SERVICE" "$SERVICE-backup.timer" >/dev/null
-systemctl reload caddy || systemctl restart caddy
+if [ "$WEB" = nginx ]; then
+  sed -e "s#__DOMAIN__#$DOMAIN#g" -e "s#__PORT__#$PORT#g" "$APP_DIR/deploy/nginx.conf" > "/etc/nginx/sites-available/$SERVICE.conf"
+  ln -sf "/etc/nginx/sites-available/$SERVICE.conf" "/etc/nginx/sites-enabled/$SERVICE.conf"
+  nginx -t && systemctl reload nginx
+  # Certificat Let's Encrypt pour ce seul domaine (les autres sites ne bougent pas)
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN" --redirect || echo "Le certificat n'a pas pu être créé (DNS pas encore propagé ?) : relancez sudo certbot --nginx -d $DOMAIN"
+else
+  mkdir -p /etc/caddy/sites
+  sed -e "s#__DOMAIN__#$DOMAIN#g" -e "s#__PORT__#$PORT#g" "$APP_DIR/deploy/Caddyfile" > "/etc/caddy/sites/$SERVICE.caddy"
+  grep -q 'import sites/\*' /etc/caddy/Caddyfile 2>/dev/null || printf '\nimport sites/*\n' >> /etc/caddy/Caddyfile
+  # Le Caddyfile par défaut sert une page sur le port 80 : on la retire si elle est encore là
+  sed -i '/^:80 {/,/^}/d' /etc/caddy/Caddyfile
+  systemctl reload caddy || systemctl restart caddy
+fi
 
 say "8/8 · Vérification"
 sleep 3

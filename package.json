@@ -1,6 +1,6 @@
 {
   "name": "crm-toog",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CRM commun Toog Expertise : demandes, devis, signature électronique, paiements Stripe, relances.",
   "private": true,
   "type": "commonjs",
