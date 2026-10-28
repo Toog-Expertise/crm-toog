@@ -1,7 +1,7 @@
 'use strict';
 // La page du client : une seule page pour valider le devis puis payer l'acompte.
 // À gauche le devis ; à droite les étapes (1. je valide, 2. je paie), l'établissement et la plaquette.
-// Validation : prénom, nom, entreprise, poste et « bon pour accord » écrit en toutes lettres. Lien secret et unique,
+// Validation : prénom, nom et « bon pour accord » écrit en toutes lettres. Lien secret et unique,
 // PDF signé avec page de preuve et empreintes SHA-256.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -120,8 +120,6 @@ function clientPage(q, deal, { justSigned = false } = {}) {
       <form id="sign-form" novalidate>
         <div class="grid g2"><label class="field"><span>Prénom</span><input name="first_name" autocomplete="given-name" required value="${escapeHtml(c.first_name || '')}"></label>
         <label class="field"><span>Nom</span><input name="last_name" autocomplete="family-name" required value="${escapeHtml(c.last_name || '')}"></label></div>
-        <label class="field"><span>Entreprise</span><input name="company" autocomplete="organization" required value="${escapeHtml(company?.name || '')}"></label>
-        <label class="field"><span>Votre poste dans l'entreprise</span><input name="role" autocomplete="organization-title" required></label>
         <label class="field"><span>Écrivez « Bon pour accord »</span><input name="agreement" required autocomplete="off" placeholder="Bon pour accord"></label>
         <p class="error" id="sign-error" hidden></p>
         <button class="btn btn-primary btn-block" type="submit">Valider le devis</button>
@@ -169,13 +167,15 @@ function register(router) {
     }
     if (!rate.hit('sign-ip:' + clientIp(req), 20, 3600e3)) throw new HttpError(429, 'Trop d’essais. Réessayez plus tard.');
     const f = (k, n = 120) => String(req.body[k] || '').trim().slice(0, n);
-    const first = f('first_name'), last = f('last_name'), company = f('company', 200), role = f('role'), agreement = f('agreement', 60);
+    const first = f('first_name'), last = f('last_name'), agreement = f('agreement', 60);
     if (!first || !last) throw new HttpError(400, 'Indiquez votre prénom et votre nom.');
-    if (!company) throw new HttpError(400, 'Indiquez votre entreprise.');
-    if (!role) throw new HttpError(400, 'Indiquez votre poste dans l’entreprise.');
     const norm = agreement.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
     if (norm !== 'bonpouraccord') throw new HttpError(400, 'Écrivez « Bon pour accord » en toutes lettres.');
     const name = `${first} ${last}`;
+    // L'entreprise vient de la demande (on ne la redemande pas au client)
+    const deal0 = deals.getDeal(q.deal_id);
+    const company = deal0.company_id ? db.get('SELECT name FROM companies WHERE id = ?', deal0.company_id)?.name || null : null;
+    const role = null;
 
     const deal = deals.getDeal(q.deal_id);
     const c = deals.contactOf(deal) || {};
@@ -189,7 +189,7 @@ function register(router) {
     fs.writeFileSync(path.join(quotes.pdfDir(), `${signed.number}-signe.pdf`), pdf);
     db.update('quotes', q.id, { signed_pdf_sha256: sha256(pdf) });
     signed = quotes.getQuote(q.id);
-    activity.log({ deal_id: deal.id, kind: 'sign', text: `Devis ${signed.number} validé par ${name} (${role}, ${company}) · « ${agreement} » · empreinte du PDF ${signed.signed_pdf_sha256.slice(0, 12)}…` });
+    activity.log({ deal_id: deal.id, kind: 'sign', text: `Devis ${signed.number} validé par ${name}${company ? ` (${company})` : ''} · « ${agreement} » · empreinte du PDF ${signed.signed_pdf_sha256.slice(0, 12)}…` });
     // L'étape n'avance que si la demande est avant « Signé » (jamais de retour en arrière)
     const order = settings.STAGES.map((s) => s.key);
     if (order.indexOf(deal.stage) < order.indexOf('signe') || deal.stage === 'perdu') deals.setStage(deal.id, 'signe', null, 'validé en ligne par le client');

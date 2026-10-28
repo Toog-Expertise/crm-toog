@@ -1,4 +1,4 @@
-/* Page du client : valider le devis (prénom, nom, entreprise, poste, « bon pour accord » écrit), puis payer l'acompte. */
+/* Page du client : valider le devis (prénom, nom, « bon pour accord » écrit), puis payer l'acompte. */
 'use strict';
 (function () {
   const root = document.getElementById('sign');
@@ -11,7 +11,7 @@
     const btn = form.querySelector('button[type=submit]');
     btn.disabled = true;
     const body = {};
-    for (const k of ['first_name', 'last_name', 'company', 'role', 'agreement']) body[k] = form[k].value.trim();
+    for (const k of ['first_name', 'last_name', 'agreement']) body[k] = form[k].value.trim();
     try {
       const r = await fetch(`/s/${encodeURIComponent(root.dataset.token)}/sign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));

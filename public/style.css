@@ -402,7 +402,7 @@ main.sg{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:28
 .sg-about{background:var(--card);border-radius:16px;padding:18px;font-size:14px}
 .sg-about h2{font-size:17px;margin:0 0 8px}
 .sg-points{list-style:none;padding:0;margin:8px 0 14px}.sg-points li{padding-left:22px;position:relative;margin:4px 0}.sg-points li::before{content:'✓';position:absolute;left:0;color:var(--accent);font-weight:800}
-.sg-ini{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:var(--grad);color:#fff;font-weight:800;font-size:20px;flex:none}
+.sg-contact .sg-ini{width:56px;height:56px;border-radius:50%;display:grid;font-size:20px;opacity:1;place-items:center;background:var(--grad);color:#fff;font-weight:800;font-size:20px;flex:none}
 .sg-contact{display:flex;gap:12px;align-items:center;margin-bottom:10px}
 .sg-contact img{width:56px;height:56px;border-radius:50%;object-fit:cover}
 .sg-contact span{display:block;font-size:13px;opacity:.85}

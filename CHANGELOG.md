@@ -2,6 +2,11 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.3.1 · 28 octobre 2026
+
+- Page du client : pour valider, seulement le prénom, le nom et « bon pour accord » écrit. L'entreprise est reprise de la demande (PDF et page de preuve) ; le poste n'est plus demandé.
+- L'initiale du contact s'affiche dans son rond quand il n'y a pas de photo.
+
 ## 1.3.0 · 28 octobre 2026 · version B2B (décisions du 28/10 avec Benjamin)
 
 - B2B uniquement : types de demande entreprise, CSE, association ; plus de relance d'avis Google ni de règles B2C.
@@ -9,7 +14,7 @@ Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a
 - Accueil : 3 chiffres (demandes reçues, devis signés, taux de signature), cette semaine (lundi → dimanche) ou ce mois-ci.
 - Devis : demandes et devis sur une seule page, vue liste ou Kanban, montant par colonne, actions sur chaque ligne (voir, renvoyer, lien), post-it. Étapes : Demande, Devis envoyé, Relance email, Relance téléphonique, Signé, Acompte payé, Réalisé, Soldé.
 - Nouveau devis manuel : activités du catalogue, HT et TTC, acompte fixe ou en %, avec ou sans lien de paiement. Recherche INSEE en option (Paramètres › Intégrations).
-- Une seule page pour le client : le devis à gauche, à droite 1. je valide (prénom, nom, entreprise, poste, « bon pour accord » écrit), 2. je paie l'acompte ; le contact de l'établissement avec sa photo, la plaquette.
+- Une seule page pour le client : le devis à gauche, à droite 1. je valide (prénom, nom, « bon pour accord » écrit), 2. je paie l'acompte ; le contact de l'établissement avec sa photo, la plaquette.
 - Paiements en tiroirs : virement classique (passage à « Acompte payé » à la main), Stripe (carte et virement vers un IBAN suivi par Stripe, webhook), Pennylane annoncé (module à part).
 - Mails auto : envoi du devis (avec le lien de la plaquette dans le texte), 2 relances signature, 2 relances acompte, M+3, M+12 ; actif ou non, délai, texte, test.
 - Équipe : prénom, nom, mail, mot de passe choisi par le gérant ; connexion par mail et mot de passe ; tout le monde a tous les droits. Google reste une option désactivée.

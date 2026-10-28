@@ -147,14 +147,15 @@ test('validation : une page, « bon pour accord » écrit, preuve SHA-256, lien 
   assert.equal(page.status, 200);
   assert.match(page.data, /Je valide le devis/);
   assert.match(page.data, /Je paie l'acompte/);
-  const base0 = { first_name: 'Famille', last_name: 'TEST', company: 'Entreprise Auto TEST', role: 'office manager' };
+  const base0 = { first_name: 'Famille', last_name: 'TEST' };
+  assert.doesNotMatch(page.data, /name="company"|name="role"/);
   assert.equal((await call('POST', autoSign + '/sign', { ...base0, agreement: 'ok' }, { who: 'client' })).status, 400);
-  assert.equal((await call('POST', autoSign + '/sign', { ...base0, role: '', agreement: 'Bon pour accord' }, { who: 'client' })).status, 400);
+  assert.equal((await call('POST', autoSign + '/sign', { first_name: 'Famille', agreement: 'Bon pour accord' }, { who: 'client' })).status, 400);
   const ok = await call('POST', autoSign + '/sign', { ...base0, agreement: 'bon pour accord' }, { who: 'client' });
   assert.equal(ok.status, 200, JSON.stringify(ok.data));
   const q = db.get('SELECT * FROM quotes ORDER BY id DESC LIMIT 1');
   assert.equal(q.status, 'signed');
-  assert.equal(q.signer_role, 'office manager');
+  assert.equal(q.signer_company, 'Entreprise Auto TEST');
   const pdf = Buffer.from(await (await fetch(base + autoSign + '/pdf')).arrayBuffer());
   assert.equal(crypto.createHash('sha256').update(pdf).digest('hex'), q.signed_pdf_sha256);
   assert.match(pdf.toString('latin1'), /\/Count 2/); // devis + page de preuve
@@ -372,7 +373,7 @@ test('1.3 : tiroir RIB, IBAN vérifié, « Acompte payé » à la main, M+3 et M
   const q = db.get('SELECT * FROM quotes WHERE id = ?', r.data.id);
   await call('POST', `/api/quotes/${q.id}/send`, {});
   const token = db.get('SELECT sign_token FROM quotes WHERE id = ?', q.id).sign_token;
-  await call('POST', `/s/${token}/sign`, { first_name: 'Max', last_name: 'TEST', company: 'Rib TEST SAS', role: 'gérant', agreement: 'Bon pour accord' }, { who: 'client' });
+  await call('POST', `/s/${token}/sign`, { first_name: 'Max', last_name: 'TEST', agreement: 'Bon pour accord' }, { who: 'client' });
   const page = (await call('GET', `/s/${token}`, undefined, { who: 'client' })).data;
   assert.match(page, /FR76 3000 6000 0112 3456 7890 189/);
   assert.match(page, new RegExp(q.number));
