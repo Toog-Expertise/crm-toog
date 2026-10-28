@@ -32,7 +32,7 @@ Côté technique : Node.js 22 ou plus récent, et la base SQLite intégrée à N
 |---|---|---|
 | Un VPS Ubuntu 22.04 ou 24.04 (1 Go de RAM suffit), accès root en SSH | faire tourner le CRM | quelques € par mois |
 | Un domaine, et l'accès à sa zone DNS | l'adresse du CRM, par exemple `crm.mon-entreprise.fr` | déjà payé |
-| Un accès en lecture au dépôt `ToogExpertise/crm-toog` | récupérer le code | — |
+| Un accès en lecture au dépôt `Toog-Expertise/crm-toog` | récupérer le code | — |
 | Google Workspace (conseillé) | la connexion Google réservée à l'entreprise | abonnement existant |
 | Un compte Google Cloud (le même compte administrateur) | connexion, Analytics, Agenda | gratuit |
 | Un compte Resend et un sous-domaine d'envoi (par exemple `notif.mon-entreprise.fr`) | les mails | gratuit jusqu'à 3 000 mails par mois |
@@ -67,7 +67,7 @@ Si le dépôt appartient à Toog Expertise, demandez à Toog d'ajouter la clé, 
 ### 3. Le code
 
 ```bash
-GIT_SSH_COMMAND="ssh -i /root/.ssh/crm_deploy -o StrictHostKeyChecking=accept-new" git clone git@github.com:ToogExpertise/crm-toog.git /opt/crm-toog
+GIT_SSH_COMMAND="ssh -i /root/.ssh/crm_deploy -o StrictHostKeyChecking=accept-new" git clone git@github.com:Toog-Expertise/crm-toog.git /opt/crm-toog
 cd /opt/crm-toog
 git config core.sshCommand "ssh -i /root/.ssh/crm_deploy"
 ```
@@ -238,7 +238,7 @@ Si vous modifiez le CRM, `./deploy.sh` lance les tests, envoie le code sur GitHu
 ## Pour développer
 
 ```bash
-git clone git@github.com:ToogExpertise/crm-toog.git && cd crm-toog
+git clone git@github.com:Toog-Expertise/crm-toog.git && cd crm-toog
 cp .env.example .env     # APP_URL=http://localhost:3000, NODE_ENV=development, ALLOWED_DOMAIN, ADMIN_EMAIL
 npm run demo             # données d'exemple, toutes marquées TEST
 npm run dev              # http://localhost:3000 ; les codes de connexion s'affichent dans le terminal

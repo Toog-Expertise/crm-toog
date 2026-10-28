@@ -2,7 +2,7 @@
 # CRM Toog : installation sur un VPS Ubuntu neuf (22.04 ou 24.04), en root.
 # Installe Node.js 24, Caddy (HTTPS automatique), le service, la sauvegarde de nuit et le premier gérant.
 #
-#   git clone git@github.com:ToogExpertise/crm-toog.git /opt/crm-toog && cd /opt/crm-toog && sudo ./install.sh
+#   git clone git@github.com:Toog-Expertise/crm-toog.git /opt/crm-toog && cd /opt/crm-toog && sudo ./install.sh
 #
 # Relançable sans risque : ce qui est déjà en place est gardé (base, .env).
 set -euo pipefail
