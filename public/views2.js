@@ -507,6 +507,7 @@
         <div class="card drawer"><span class="label">Tiroir 2 · Stripe</span>
           <label class="check"><input type="checkbox" name="stripe" ${pm.stripe ? 'checked' : ''} ${S.stripe_mode ? '' : 'disabled'}><span><b>Proposer le paiement en ligne</b> · ${S.stripe_mode ? h`<span class="status-ok">branché, ${S.stripe_mode === 'test' ? 'mode test' : 'mode réel'}</span>` : h`<span class="status-ko">clés Stripe à mettre dans le .env</span>`}</span></label>
           <label class="check"><input type="checkbox" name="stripe_transfer" ${pm.stripe_transfer !== false ? 'checked' : ''}><span>Carte bancaire <b>et</b> virement vers un IBAN propre au client, suivi par Stripe</span></label>
+          <label class="check"><input type="checkbox" name="stripe_full" ${pm.stripe_full ? 'checked' : ''}><span>Proposer aussi « Tout régler maintenant » : le client peut payer le devis entier en une fois</span></label>
           <p class="small muted">${S.stripe_webhook ? 'Webhook branché : le devis passe tout seul en « Acompte payé », avec le montant réglé.' : 'Webhook Stripe à créer (adresse dans Intégrations) pour le passage automatique en « Acompte payé ».'}</p>
           ${S.stripe_mode === 'test' ? h`<button type="button" class="btn btn-ghost btn-sm" id="test-pay">Tester : paiement de 1 €</button>` : ''}</div>
         <div class="card drawer off"><span class="label">Tiroir 3 · Pennylane</span>

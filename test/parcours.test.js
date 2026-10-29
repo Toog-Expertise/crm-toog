@@ -217,9 +217,14 @@ test('relances : J+3 après l’envoi, horloge de test, arrêt à la signature',
   const sched = db.all("SELECT * FROM reminders WHERE quote_id = ? AND status = 'scheduled' ORDER BY due_at", q.id);
   assert.deepEqual(sched.map((r) => r.template), ['relance_devis', 'relance_devis_2']);
   const before = mail.outbox.filter((m) => m.template === 'relance_devis').length;
-  // Avance jusqu'à J+4 (la relance de J+3 peut tomber un dimanche ou le soir : elle est alors recalée)
-  await call('POST', '/api/clock', { days: 4 });
-  await call('POST', '/api/clock', { days: 1 });
+  // Avance jusqu'à J+4 à 10 h, heure de Paris, hors dimanche (en dehors de 9 h-19 h, la relance attend le créneau suivant :
+  // avancer de jours entiers depuis un soir ne tomberait jamais dans la fenêtre d'envoi)
+  const { parisParts } = require('../src/util');
+  let days = 4;
+  while (parisParts(Date.now() + days * 86400e3).weekday === 0) days++;
+  const at = parisParts(Date.now() + days * 86400e3);
+  settings.set('clock_offset_ms', days * 86400e3 + ((10 - at.hour) * 60 - at.minute) * 60e3);
+  await require('../src/reminders').tick();
   assert.ok(mail.outbox.filter((m) => m.template === 'relance_devis').length > before, 'la relance J+3 est partie');
   assert.equal(db.get('SELECT stage FROM deals WHERE id = ?', deal.id).stage, 'relance_email');
   // Reporter puis couper
@@ -421,4 +426,42 @@ test('1.4 : le mail du devis donne le paiement choisi (IBAN si le virement est p
   await call('PUT', '/api/settings/payments', { value: { rib: false, stripe: false } });
   assert.equal(quotes.quoteVars(quotes.getQuote(q.id), { lien: 'x' }).paiement, '');
   assert.ok(!mail.render('devis', quotes.quoteVars(quotes.getQuote(q.id), { lien: 'https://crm.exemple.fr/s/jeton' })).text.includes('{{'));
+});
+
+test('1.6 : paiement intégral (acompte à 100 %) et « Tout régler maintenant »', async () => {
+  const quotes = require('../src/quotes');
+  assert.equal(quotes.depositLabel({ total_ttc: 1000, deposit_cents: 1000, deposit_mode: 'pct', deposit_pct: 100 }), 'Paiement intégral');
+  assert.equal(quotes.depositLabel({ total_ttc: 1000, deposit_cents: 300, deposit_mode: 'pct', deposit_pct: 30 }), 'Acompte de 30 %');
+  const { config } = require('../src/env');
+  config.stripe.secret = 'sk_test_factice'; // la page ne fait que préparer les liens : aucun appel à Stripe
+  await call('PUT', '/api/settings/payments', { value: { rib: false, stripe: true, stripe_full: true } });
+  const r = await call('POST', '/api/quotes/manual', { company: 'Intégral TEST SAS', first_name: 'Noé', last_name: 'TEST', email: 'noe.test@exemple.fr', type: 'entreprise', people: 10, lines: [{ product_id: productId, qty: 10 }], deposit_mode: 'pct', deposit_value: '30' });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  await call('POST', `/api/quotes/${r.data.id}/send`, {});
+  const sign = `/s/${db.get('SELECT sign_token FROM quotes WHERE id = ?', r.data.id).sign_token}`;
+  assert.equal((await call('POST', sign + '/sign', { first_name: 'Noé', last_name: 'TEST', agreement: 'bon pour accord' }, { who: 'client' })).status, 200);
+  const page = (await call('GET', sign, undefined, { who: 'client' })).data;
+  assert.match(page, /Payer l'acompte</);
+  assert.match(page, /Tout régler maintenant \(500,00/);
+  // Le client règle tout : demande soldée, l'acompte en attente est annulé
+  const full = db.get("SELECT * FROM payments WHERE quote_id = ? AND kind = 'full' AND status = 'pending'", r.data.id);
+  assert.equal(full.amount_cents, 50000);
+  const ev = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_test_full', payment_status: 'paid', payment_intent: 'pi_test_full', livemode: false, metadata: { payment_id: String(full.id) } } } });
+  assert.equal((await call('POST', '/api/stripe/webhook', ev, { who: 'stripe', headers: { 'Stripe-Signature': stripeSig(ev) } })).status, 200);
+  assert.equal(db.get('SELECT stage FROM deals WHERE id = ?', r.data.deal_id).stage, 'paye');
+  assert.equal(db.get("SELECT COUNT(*) n FROM payments WHERE quote_id = ? AND status = 'pending'", r.data.id).n, 0);
+  assert.match((await call('GET', sign, undefined, { who: 'client' })).data, /Paiement reçu, merci/);
+  // Acompte à 100 % : libellés « Paiement intégral », pas de second bouton
+  const r2 = await call('POST', '/api/quotes/manual', { company: 'Intégral TEST SAS', first_name: 'Noé', last_name: 'TEST', email: 'noe.test@exemple.fr', type: 'entreprise', lines: [{ product_id: productId, qty: 4 }], deposit_mode: 'pct', deposit_value: '100' });
+  await call('POST', `/api/quotes/${r2.data.id}/send`, {});
+  const q2 = quotes.getQuote(r2.data.id);
+  assert.match(quotes.quoteVars(q2, { lien: 'https://crm.exemple.fr/s/x' }).paiement, /Payer le montant total de 200,00/);
+  const sign2 = `/s/${q2.sign_token}`;
+  assert.match((await call('GET', sign2, undefined, { who: 'client' })).data, /Paiement intégral à la validation/);
+  await call('POST', sign2 + '/sign', { first_name: 'Noé', last_name: 'TEST', agreement: 'bon pour accord' }, { who: 'client' });
+  const page2 = (await call('GET', sign2, undefined, { who: 'client' })).data;
+  assert.match(page2, /Payer le montant total</);
+  assert.doesNotMatch(page2, /Tout régler maintenant/);
+  await call('PUT', '/api/settings/payments', { value: { rib: false, stripe: false } });
+  config.stripe.secret = '';
 });

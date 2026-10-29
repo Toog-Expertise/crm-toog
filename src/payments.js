@@ -11,7 +11,7 @@ const deals = require('./deals');
 const { config } = require('./env');
 const { randomToken, money, safeEqual, fullName, HttpError, dateEvent } = require('./util');
 
-const KIND_LABEL = { deposit: 'acompte', balance: 'solde', free: 'paiement libre', test: 'paiement de test' };
+const KIND_LABEL = { deposit: 'acompte', full: 'paiement intégral', balance: 'solde', free: 'paiement libre', test: 'paiement de test' };
 
 const stripeMode = () => {
   const k = config.stripe.secret;
@@ -55,7 +55,7 @@ function createPayment({ deal_id = null, quote_id = null, kind, amount_cents, la
   if (!Number.isFinite(amount) || amount < 50) throw new HttpError(400, 'Montant invalide (minimum 0,50 €).');
   if (amount > 10000000) throw new HttpError(400, 'Montant trop élevé.');
   // Un seul lien en attente par devis et par type : on le réutilise
-  if (quote_id && (kind === 'deposit' || kind === 'balance')) {
+  if (quote_id && ['deposit', 'full', 'balance'].includes(kind)) {
     const ex = db.get("SELECT * FROM payments WHERE quote_id = ? AND kind = ? AND status = 'pending'", quote_id, kind);
     if (ex && ex.amount_cents === amount) return ex;
     // Montant changé : l'ancien lien est annulé (s'il est quand même payé, le webhook l'enregistre au montant réel)
@@ -81,7 +81,15 @@ function depositFor(quote) {
   const { paid } = quoteBalance(quote);
   const due = Math.max(0, quote.deposit_cents - paid);
   if (due < 50) return null;
-  return createPayment({ deal_id: quote.deal_id, quote_id: quote.id, kind: 'deposit', amount_cents: due, label: `acompte${quote.deposit_mode === 'fixe' ? '' : ` ${String(quote.deposit_pct).replace('.', ',')} %`} · devis ${quote.number}` });
+  const full = require('./quotes').isFull(quote);
+  return createPayment({ deal_id: quote.deal_id, quote_id: quote.id, kind: 'deposit', amount_cents: due, label: `${full ? 'paiement intégral' : `acompte${quote.deposit_mode === 'fixe' ? '' : ` ${String(quote.deposit_pct).replace('.', ',')} %`}`} · devis ${quote.number}` });
+}
+
+// « Tout régler maintenant » : le reste du devis en un seul paiement, si le dirigeant le propose (Paramètres › Paiements)
+function fullFor(quote) {
+  const { remaining } = quoteBalance(quote);
+  if (remaining < 50) return null;
+  return createPayment({ deal_id: quote.deal_id, quote_id: quote.id, kind: 'full', amount_cents: remaining, label: `paiement intégral · devis ${quote.number}` });
 }
 
 async function sendPaymentLink(p, user = null) {
@@ -193,7 +201,13 @@ async function afterPaid(p, text, user = null) {
   const quote = p.quote_id ? db.get('SELECT * FROM quotes WHERE id = ?', p.quote_id) : null;
   if (quote) {
     const { remaining } = quoteBalance(quote);
-    if (remaining <= 0 && deal.stage !== 'paye') deals.setStage(deal.id, 'paye');
+    // Un paiement est arrivé : le lien « Tout régler maintenant » n'est plus au bon montant
+    db.run("UPDATE payments SET status = 'cancelled' WHERE quote_id = ? AND kind = 'full' AND status = 'pending'", quote.id);
+    if (remaining <= 0) {
+      // Tout est réglé : les autres liens en attente de ce devis ne servent plus
+      db.run("UPDATE payments SET status = 'cancelled' WHERE quote_id = ? AND status = 'pending'", quote.id);
+      if (deal.stage !== 'paye') deals.setStage(deal.id, 'paye');
+    }
     else if (remaining > 0 && [...settings.BEFORE_SIGN, 'signe'].includes(deal.stage)) deals.setStage(deal.id, 'acompte');
   }
   require('./reminders').onPaid(deal.id);
@@ -289,4 +303,4 @@ function exportCsv() {
   return '\ufeff' + lines.map((l) => l.map(cell).join(';')).join('\r\n') + '\r\n';
 }
 
-module.exports = { quoteMethods, markReceived, afterPaid, METHODS, validIban, methods, exportCsv, createPayment, depositFor, sendPaymentLink, checkoutUrl, verifyWebhook, handleWebhook, refund, status, stripeMode, payLink, quoteBalance, getPayment, KIND_LABEL, markPaid, flatten };
+module.exports = { quoteMethods, markReceived, afterPaid, METHODS, validIban, methods, exportCsv, createPayment, depositFor, fullFor, sendPaymentLink, checkoutUrl, verifyWebhook, handleWebhook, refund, status, stripeMode, payLink, quoteBalance, getPayment, KIND_LABEL, markPaid, flatten };

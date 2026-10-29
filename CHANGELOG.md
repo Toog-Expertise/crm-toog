@@ -2,6 +2,13 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.6.0 · 29 octobre 2026 · paiement intégral
+
+- Paramètres › Paiements › Stripe : nouvelle case « Proposer aussi « Tout régler maintenant » ». Après la validation, le client choisit sur sa page : payer l'acompte, ou tout régler en une fois ; la demande passe alors directement en « Soldé ».
+- Un acompte réglé à 100 % (ou d'un montant égal au total) s'appelle « Paiement intégral » sur le devis, le PDF, la page du client et le mail du devis.
+- Dès qu'un paiement arrive, les liens devenus inutiles sont annulés : jamais deux encaissements pour le même devis.
+- Test des relances : il tombe toujours dans la fenêtre d'envoi (9 h-19 h), quelle que soit l'heure à laquelle on lance les tests.
+
 ## 1.5.0 · 29 octobre 2026 · dépôt de référence
 
 - Le dépôt sert de modèle (« Use this template ») : tout le monde part de la même interface.

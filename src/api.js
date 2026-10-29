@@ -650,7 +650,7 @@ function register(router) {
       delete v.brochure_url;
     }
     if (key === 'payments') {
-      v = { rib: Boolean(v.rib), stripe: Boolean(v.stripe), stripe_transfer: v.stripe_transfer !== false, pennylane: false, holder: String(v.holder || '').trim().slice(0, 120), iban: String(v.iban || '').replace(/\s/g, '').toUpperCase().slice(0, 34), bic: String(v.bic || '').replace(/\s/g, '').toUpperCase().slice(0, 11), transfer_note: String(v.transfer_note || '').slice(0, 300) };
+      v = { rib: Boolean(v.rib), stripe: Boolean(v.stripe), stripe_transfer: v.stripe_transfer !== false, stripe_full: Boolean(v.stripe_full), pennylane: false, holder: String(v.holder || '').trim().slice(0, 120), iban: String(v.iban || '').replace(/\s/g, '').toUpperCase().slice(0, 34), bic: String(v.bic || '').replace(/\s/g, '').toUpperCase().slice(0, 11), transfer_note: String(v.transfer_note || '').slice(0, 300) };
       if (v.iban && !payments.validIban(v.iban)) throw new HttpError(400, 'IBAN invalide : vérifiez les chiffres (clé de contrôle incorrecte).');
       if (v.bic && !/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v.bic)) throw new HttpError(400, 'BIC invalide (8 ou 11 caractères).');
       if (v.rib && !v.iban) throw new HttpError(400, "Renseignez l'IBAN pour proposer le virement classique.");

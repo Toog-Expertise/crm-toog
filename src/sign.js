@@ -65,7 +65,7 @@ function quoteHtml(q, deal) {
     <table class="sg-lines"><tr><th>Prestation</th><th>Qté</th><th>Total TTC</th></tr>${lines.map((l) => `<tr><td>${escapeHtml(l.label)}${l.description ? `<small>${escapeHtml(l.description)}</small>` : ''}</td><td>${l.qty}</td><td>${escapeHtml(money(l.total_cents))}</td></tr>`).join('')}</table>
     <div class="sg-tot"><div><span>Total HT</span><b>${escapeHtml(money(q.total_ht))}</b></div>${Object.entries(vatRates).map(([r, v]) => `<div><span>TVA ${escapeHtml(String(r).replace('.', ','))} %</span><b>${escapeHtml(money(v))}</b></div>`).join('')}
       <div class="sg-ttc"><span>Total TTC</span><b>${escapeHtml(money(q.total_ttc))}</b></div>
-      ${q.deposit_cents > 0 ? `<div class="sg-dep"><span>Acompte à la validation${q.deposit_mode === 'fixe' ? '' : ` (${escapeHtml(String(q.deposit_pct).replace('.', ','))} %)`}</span><b>${escapeHtml(money(q.deposit_cents))}</b></div>` : ''}</div>
+      ${q.deposit_cents > 0 ? `<div class="sg-dep"><span>${escapeHtml(quotes.depositLabel(q))} à la validation</span><b>${escapeHtml(money(q.deposit_cents))}</b></div>` : ''}</div>
     ${q.conditions ? `<p class="sg-cond">${escapeHtml(q.conditions)}</p>` : ''}
     <a class="link small" href="/s/${escapeHtml(q.sign_token)}/pdf" target="_blank" rel="noopener">Télécharger le devis (PDF)</a>
   </div>`;
@@ -87,27 +87,35 @@ function aboutHtml() {
   </div>`;
 }
 
-// Étape 2 : payer l'acompte (carte et virement suivi par Stripe, ou RIB classique), selon les moyens de ce devis
+// Étape 2 : payer l'acompte (carte et virement suivi par Stripe, ou RIB classique), selon les moyens de ce devis ;
+// « Tout régler maintenant » si le dirigeant le propose ; un acompte de 100 % s'affiche « Paiement intégral »
 function payHtml(q, signed) {
   if (!(q.deposit_cents > 0)) return `<div class="sg-step ${signed ? 'on' : 'off'}"><div class="sg-n">2</div><div><h2>Je paie</h2><p class="muted">Pas d'acompte demandé pour ce devis.</p></div></div>`;
   const ways = payments.quoteMethods(q);
   const balance = payments.quoteBalance(q);
+  const full = quotes.isFull(q);
+  const what = full ? 'le montant total' : "l'acompte";
   const done = balance.paid >= q.deposit_cents;
   let inner;
-  if (!signed) inner = `<p class="muted">Après la validation : acompte de <b>${escapeHtml(money(q.deposit_cents))}</b>.</p>`;
-  else if (done) inner = `<p class="ok-text">✓ Acompte reçu, merci ! Votre réservation est confirmée.</p>`;
+  if (!signed) inner = `<p class="muted">Après la validation : ${full ? 'paiement intégral' : 'acompte'} de <b>${escapeHtml(money(q.deposit_cents))}</b>.</p>`;
+  else if (done) inner = `<p class="ok-text">✓ ${balance.remaining > 0 ? 'Acompte reçu' : 'Paiement reçu'}, merci ! Votre réservation est confirmée.</p>`;
   else {
     const dep = payments.depositFor(q);
     const pm = settings.get('payments');
-    inner = `<div class="pub-deposit"><span>Acompte</span><strong>${escapeHtml(money(dep ? dep.amount_cents : q.deposit_cents))}</strong></div>`;
-    if (ways.includes('stripe') && dep) inner += `<a class="btn btn-primary btn-block" href="/p/${escapeHtml(dep.pay_token)}?carte=1">Payer l'acompte</a><p class="muted small center">Paiement sécurisé par Stripe${pm.stripe_transfer ? ' : carte bancaire ou virement' : ' : carte bancaire'}</p>`;
+    const all = ways.includes('stripe') && pm.stripe_full && !full ? payments.fullFor(q) : null;
+    inner = `<div class="pub-deposit"><span>${full ? 'Paiement intégral' : 'Acompte'}</span><strong>${escapeHtml(money(dep ? dep.amount_cents : q.deposit_cents))}</strong></div>`;
+    if (ways.includes('stripe') && dep) {
+      inner += `<a class="btn btn-primary btn-block" href="/p/${escapeHtml(dep.pay_token)}?carte=1">${full ? 'Payer le montant total' : "Payer l'acompte"}</a>`;
+      if (all) inner += `<a class="btn btn-ghost btn-block" href="/p/${escapeHtml(all.pay_token)}?carte=1">Tout régler maintenant (${escapeHtml(money(all.amount_cents))})</a>`;
+      inner += `<p class="muted small center">Paiement sécurisé par Stripe${pm.stripe_transfer ? ' : carte bancaire ou virement' : ' : carte bancaire'}</p>`;
+    }
     if (ways.includes('rib')) {
       const rows = [['Titulaire', pm.holder], ['IBAN', quotes.formatIban(pm.iban)], ['BIC', pm.bic], ['Référence', q.number]].filter(([, v]) => v);
       inner += `<div class="pub-transfer"><h3>${ways.includes('stripe') ? 'Ou par virement' : 'Par virement'}</h3><dl>${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl><p class="muted small">${escapeHtml(pm.transfer_note || '')} La réservation est confirmée à réception.</p></div>`;
     }
-    if (!ways.length) inner += '<p class="muted">Nous revenons vers vous pour le règlement de l’acompte.</p>';
+    if (!ways.length) inner += `<p class="muted">Nous revenons vers vous pour le règlement de ${what}.</p>`;
   }
-  return `<div class="sg-step ${signed ? 'on' : 'off'}"><div class="sg-n">2</div><div><h2>Je paie l'acompte</h2>${inner}</div></div>`;
+  return `<div class="sg-step ${signed ? 'on' : 'off'}"><div class="sg-n">2</div><div><h2>${full ? 'Je paie' : "Je paie l'acompte"}</h2>${inner}</div></div>`;
 }
 
 function clientPage(q, deal, { justSigned = false } = {}) {
@@ -128,7 +136,7 @@ function clientPage(q, deal, { justSigned = false } = {}) {
   const body = `<main class="sg" id="sign" data-token="${escapeHtml(q.sign_token)}">
     <section class="sg-left" id="devis">${quoteHtml(q, deal)}</section>
     <aside class="sg-right"><h1>Votre devis</h1>
-      <a class="sg-mini" href="#devis"><span>Devis N° ${escapeHtml(q.number)}</span><b>${escapeHtml(money(q.total_ttc))} TTC</b>${q.deposit_cents > 0 ? `<span>acompte ${escapeHtml(money(q.deposit_cents))}</span>` : ''}<u>Voir le détail ↓</u></a>
+      <a class="sg-mini" href="#devis"><span>Devis N° ${escapeHtml(q.number)}</span><b>${escapeHtml(money(q.total_ttc))} TTC</b>${q.deposit_cents > 0 && !quotes.isFull(q) ? `<span>acompte ${escapeHtml(money(q.deposit_cents))}</span>` : ''}<u>Voir le détail ↓</u></a>
       ${step1}${payHtml(q, signed)}${aboutHtml()}</aside>
   </main>`;
   return pages.page({ title: `Devis ${q.number}`, body, scripts: signed ? [] : ['/static/sign.js'] });

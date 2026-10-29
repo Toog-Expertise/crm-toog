@@ -56,7 +56,7 @@ function layout(text) {
 }
 
 function buttonLabel(url) {
-  if (url.includes('/s/') && url.includes('payer=1')) return "Payer l'acompte";
+  if (url.includes('/s/') && url.includes('payer=1')) return 'Payer en ligne';
   if (url.includes('/s/')) return 'Voir et signer le devis';
   if (url.includes('/p/')) return 'Payer en ligne';
   if (url.includes('/d/')) return 'Voir le devis';

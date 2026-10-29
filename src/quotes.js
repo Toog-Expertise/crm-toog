@@ -91,8 +91,11 @@ function paymentText(q) {
   const ways = [];
   if (methods.includes('stripe')) ways.push(`en ligne avec le lien de paiement sécurisé${pm.stripe_transfer ? ' (carte bancaire ou virement)' : ' (carte bancaire)'}`);
   if (methods.includes('rib')) ways.push(`par virement : ${pm.holder ? `${pm.holder}, ` : ''}IBAN ${formatIban(pm.iban)}${pm.bic ? `, BIC ${pm.bic}` : ''}, référence ${q.number}`);
-  return ways.length ? `Règlement de l'acompte ${ways.join(' ; ou ')}.` : '';
+  return ways.length ? `Règlement ${isFull(q) ? 'du montant total' : "de l'acompte"} ${ways.join(' ; ou ')}.` : '';
 }
+// Un acompte égal au total, c'est un paiement intégral : les libellés le disent
+const isFull = (q) => q.total_ttc > 0 && q.deposit_cents >= q.total_ttc;
+const depositLabel = (q) => (isFull(q) ? 'Paiement intégral' : q.deposit_mode === 'fixe' ? 'Acompte' : `Acompte de ${String(q.deposit_pct).replace('.', ',')} %`);
 const formatIban = (iban) => String(iban || '').replace(/\s/g, '').replace(/(.{4})/g, '$1 ').trim();
 
 function readLogo() {
@@ -205,7 +208,7 @@ function renderPdf(q, { signature = null, proof = null } = {}) {
   pdf.text(tx, y + 8, 'Total TTC', { size: 12, bold: true, color: ink });
   pdf.text(tx, y, money(q.total_ttc), { size: 24, bold: true, color: primary, align: 'right', width: 230 });
   y += 36;
-  if (q.deposit_cents > 0) row(q.deposit_mode === 'fixe' ? 'Acompte à la validation' : `Acompte de ${String(q.deposit_pct).replace('.', ',')} % à la validation`, money(q.deposit_cents), { bold: true });
+  if (q.deposit_cents > 0) row(`${depositLabel(q)} à la validation`, money(q.deposit_cents), { bold: true });
   y += 12;
 
   // Conditions et mentions
@@ -287,10 +290,12 @@ function paymentLines(q, link) {
   const ways = require('./payments').quoteMethods(q);
   const pm = settings.get('payments');
   const out = [];
-  if (ways.includes('stripe')) out.push(`Payer l'acompte de ${money(q.deposit_cents)} en ligne, juste après la validation (carte bancaire${pm.stripe_transfer ? ' ou virement' : ''}) :`, '', `${link}?payer=1`);
+  const what = isFull(q) ? 'le montant total' : "l'acompte";
+  if (ways.includes('stripe')) out.push(`Payer ${what} de ${money(q.deposit_cents)} en ligne, juste après la validation (carte bancaire${pm.stripe_transfer ? ' ou virement' : ''}) :`, '', `${link}?payer=1`);
+  if (ways.includes('stripe') && pm.stripe_full && !isFull(q)) out.push('', `Ou tout régler en une fois (${money(q.total_ttc)}), sur la même page.`);
   if (ways.includes('rib') && pm.iban) {
     if (out.length) out.push('');
-    out.push(`${ways.includes('stripe') ? 'Ou par virement' : `Régler l'acompte de ${money(q.deposit_cents)} par virement`}, après la validation :`,
+    out.push(`${ways.includes('stripe') ? 'Ou par virement' : `Régler ${what} de ${money(q.deposit_cents)} par virement`}, après la validation :`,
       [pm.holder && `Titulaire : ${pm.holder}`, `IBAN : ${formatIban(pm.iban)}`, pm.bic && `BIC : ${pm.bic}`, `Référence : ${q.number}`].filter(Boolean).join(' · '));
   }
   return out.join('\n');
@@ -343,4 +348,4 @@ function pdfFor(q) {
   return renderPdf(q);
 }
 
-module.exports = { formatIban, paymentText, getQuote, createQuote, updateQuote, renderPdf, freeze, sendQuote, quoteVars, ensureSignToken, pdfFor, pdfDir, defaultObject, readLogo };
+module.exports = { isFull, depositLabel, formatIban, paymentText, getQuote, createQuote, updateQuote, renderPdf, freeze, sendQuote, quoteVars, ensureSignToken, pdfFor, pdfDir, defaultObject, readLogo };

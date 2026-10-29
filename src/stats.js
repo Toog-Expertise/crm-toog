@@ -49,7 +49,7 @@ function todo(user) {
 const MAX_DELAY_DAYS = 30;
 function depositDelay(from, to) {
   const rows = db.all(`SELECT q.id, q.sent_at, MIN(p.paid_at) paid_at FROM quotes q JOIN payments p ON p.quote_id = q.id
-    WHERE q.sent_at IS NOT NULL AND p.kind IN ('deposit', 'balance') AND p.status IN ('paid', 'partially_refunded', 'refunded')
+    WHERE q.sent_at IS NOT NULL AND p.kind IN ('deposit', 'full', 'balance') AND p.status IN ('paid', 'partially_refunded', 'refunded')
     GROUP BY q.id HAVING MIN(p.paid_at) BETWEEN ? AND ?`, from, to);
   const days = rows.map((r) => (r.paid_at - r.sent_at) / 86400e3).filter((d) => d >= 0);
   const kept = days.filter((d) => d <= MAX_DELAY_DAYS);

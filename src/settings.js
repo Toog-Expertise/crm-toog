@@ -76,7 +76,7 @@ const DEFAULTS = {
     window: { start: 9, end: 19, sunday: false },
   },
   // Les tiroirs de paiement : virement classique (RIB), Stripe (carte et virement suivi), Pennylane (module à part)
-  payments: { rib: true, stripe: false, stripe_transfer: true, pennylane: false, holder: '', iban: '', bic: '', transfer_note: 'Merci d’indiquer le numéro du devis en référence du virement.' },
+  payments: { rib: true, stripe: false, stripe_transfer: true, stripe_full: false, pennylane: false, holder: '', iban: '', bic: '', transfer_note: 'Merci d’indiquer le numéro du devis en référence du virement.' },
   mails: {},                 // modèles modifiés ; sinon MAIL_TEMPLATES
   deal_types: DEAL_TYPES,
   integrations: { site_url: '', calendar_id: '', event_duration_min: 120, sirene: false },   // sirene : option « recherche d'entreprise »
