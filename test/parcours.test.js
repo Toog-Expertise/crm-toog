@@ -411,7 +411,7 @@ test('1.3 : la plaquette vient du mail d’envoi du devis', async () => {
 test('1.4 : le mail du devis donne le paiement choisi (IBAN si le virement est proposé)', async () => {
   const quotes = require('../src/quotes');
   const q = db.get("SELECT * FROM quotes WHERE status != 'signed' AND deposit_cents > 0 ORDER BY id DESC LIMIT 1");
-  const r = await call('PUT', '/api/settings/payments', { value: { rib: true, stripe: false, holder: 'Crystana TEST', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' } });
+  const r = await call('PUT', '/api/settings/payments', { value: { rib: true, stripe: false, holder: 'Entreprise TEST', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const v = quotes.quoteVars(quotes.getQuote(q.id), { lien: 'https://crm.exemple.fr/s/jeton' });
   assert.match(v.paiement, /IBAN : FR76 3000 6000 0112 3456 7890 189/);
