@@ -15,7 +15,7 @@ const { json, send } = require('./http');
 const PROTOCOL = '2025-06-18';
 
 const TOOLS = [
-  { name: 'lister_demandes', area: 'demandes', description: 'Liste les demandes (opportunités) du CRM, filtrables par étape et par recherche.', inputSchema: { type: 'object', properties: { etape: { type: 'string', description: 'nouvelle, a_rappeler, devis_envoye, signature, signe, acompte, paye, perdu' }, recherche: { type: 'string' }, limite: { type: 'integer', default: 30 } } } },
+  { name: 'lister_demandes', area: 'demandes', description: 'Liste les demandes (opportunités) du CRM, filtrables par étape et par recherche.', inputSchema: { type: 'object', properties: { etape: { type: 'string', description: 'nouvelle (Demande), devis_envoye, relance_email, relance_tel, signe, acompte (Acompte payé), realise, paye (Soldé), perdu' }, recherche: { type: 'string' }, limite: { type: 'integer', default: 30 } } } },
   { name: 'voir_demande', area: 'demandes', description: "Détail d'une demande : contact, champs, devis, paiements, relances et historique.", inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
   { name: 'lister_devis', area: 'devis', description: 'Liste les devis, filtrables par statut (draft, sent, signed, cancelled) et par période.', inputSchema: { type: 'object', properties: { statut: { type: 'string' }, depuis: { type: 'string', description: 'date AAAA-MM-JJ' } } } },
   { name: 'lister_paiements', area: 'paiements', description: 'Liste les paiements (pending, paid, refunded…).', inputSchema: { type: 'object', properties: { statut: { type: 'string' } } } },

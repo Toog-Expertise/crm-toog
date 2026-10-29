@@ -275,8 +275,25 @@ function quoteVars(q, extra = {}) {
   return {
     prenom: c.first_name || fullName(c) || '', client: fullName(c), numero: q.number, montant: money(q.total_ttc),
     validite: dateShort(q.valid_until), date: deal.event_at ? dateEvent(deal.event_at) : 'prévue', acompte: money(q.deposit_cents),
-    societe: deal.company_id ? db.get('SELECT name FROM companies WHERE id = ?', deal.company_id)?.name || '' : '', ...extra,
+    societe: deal.company_id ? db.get('SELECT name FROM companies WHERE id = ?', deal.company_id)?.name || '' : '',
+    paiement: extra.lien ? paymentLines(q, extra.lien) : '', ...extra,
   };
+}
+
+// Le paiement de l'acompte dans le mail du devis, selon ce que le dirigeant a choisi pour ce devis :
+// le lien pour payer en ligne (après la validation, sur la même page) et/ou l'IBAN
+function paymentLines(q, link) {
+  if (!(q.deposit_cents > 0) || q.status === 'signed') return '';
+  const ways = require('./payments').quoteMethods(q);
+  const pm = settings.get('payments');
+  const out = [];
+  if (ways.includes('stripe')) out.push(`Payer l'acompte de ${money(q.deposit_cents)} en ligne, juste après la validation (carte bancaire${pm.stripe_transfer ? ' ou virement' : ''}) :`, '', `${link}?payer=1`);
+  if (ways.includes('rib') && pm.iban) {
+    if (out.length) out.push('');
+    out.push(`${ways.includes('stripe') ? 'Ou par virement' : `Régler l'acompte de ${money(q.deposit_cents)} par virement`}, après la validation :`,
+      [pm.holder && `Titulaire : ${pm.holder}`, `IBAN : ${formatIban(pm.iban)}`, pm.bic && `BIC : ${pm.bic}`, `Référence : ${q.number}`].filter(Boolean).join(' · '));
+  }
+  return out.join('\n');
 }
 
 function ensureSignToken(q) {

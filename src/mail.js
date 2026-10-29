@@ -20,7 +20,7 @@ function baseVars() {
 }
 
 // Champs facultatifs : la ligne qui les contient disparaît quand ils sont vides (pas de plaquette, pas de réduction)
-const OPTIONAL = ['plaquette', 'reduction'];
+const OPTIONAL = ['plaquette', 'reduction', 'paiement'];
 
 function render(key, vars) {
   const tpl = settings.mailTemplate(key);
@@ -56,6 +56,7 @@ function layout(text) {
 }
 
 function buttonLabel(url) {
+  if (url.includes('/s/') && url.includes('payer=1')) return "Payer l'acompte";
   if (url.includes('/s/')) return 'Voir et signer le devis';
   if (url.includes('/p/')) return 'Payer en ligne';
   if (url.includes('/d/')) return 'Voir le devis';

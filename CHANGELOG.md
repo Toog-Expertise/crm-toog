@@ -2,6 +2,12 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.4.0 · 29 octobre 2026
+
+- Paramètres › Intégrations regroupe tout ce qui se branche : l'état des services (Stripe, Resend, Turnstile, site…), les adresses à recopier, l'option INSEE, et la partie API et MCP (jetons, adresse MCP pour Claude, adresses de l'API) pour connecter d'autres outils. L'ancien onglet « MCP et API » y renvoie.
+- Le mail d'envoi du devis donne le paiement choisi par le dirigeant pour ce devis : le bouton « Payer l'acompte » (paiement en ligne, juste après la validation) et/ou l'IBAN avec la référence. Nouvelle variable {{paiement}} ; la ligne disparaît s'il n'y a rien à payer.
+- MCP : la liste des étapes de l'outil lister_demandes suit les étapes de la version B2B.
+
 ## 1.3.1 · 28 octobre 2026
 
 - Page du client : pour valider, seulement le prénom, le nom et « bon pour accord » écrit. L'entreprise est reprise de la demande (PDF et page de preuve) ; le poste n'est plus demandé.

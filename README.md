@@ -198,10 +198,10 @@ Les chiffres d'Analytics sont mis en cache une heure. Une réservation entre dan
 
 #### MCP et API : brancher Claude ou d'autres outils
 
-Dans le CRM, ouvrez **Paramètres › MCP et API** (ou **Mon compte**) › **Créer un jeton**. Le jeton a les droits de la personne qui le crée.
+Dans le CRM, ouvrez **Paramètres › Intégrations** (ou **Mon compte**) › **Créer un jeton**. Le jeton a les droits de la personne qui le crée.
 
 - **Claude** : dans Claude, ouvrez **Paramètres** › **Connecteurs** › **Ajouter un connecteur personnalisé** et collez l'adresse affichée (`https://crm…/mcp/crm_…`).
-- **Un autre outil** (logiciel de caisse, Zapier, Make, tableur) : il appelle l'API `https://crm…/api/…` avec l'en-tête `Authorization: Bearer <jeton>`. Les adresses principales sont listées dans **Paramètres › MCP et API**.
+- **Un autre outil** (logiciel de caisse, Zapier, Make, tableur) : il appelle l'API `https://crm…/api/…` avec l'en-tête `Authorization: Bearer <jeton>`. Les adresses principales sont listées dans **Paramètres › Intégrations**.
 
 Depuis Claude, le CRM permet ceci :
 

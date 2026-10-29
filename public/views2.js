@@ -338,7 +338,7 @@
     { tpl: 'un_an', rule: 'm12', label: 'Anniversaire M+12 · −10 %', group: 'Fidélisation', trig: (r) => `${r.m12.months} mois après la date de l'événement`, stop: 'un devis a été signé dans les 12 derniers mois' },
   ];
   const GROUPS = [['Signature', 'Du devis envoyé à la signature'], ['Acompte', 'De la signature à l’acompte payé'], ['Fidélisation', 'Après l’événement']];
-  const VARS = ['{{prenom}}', '{{societe}}', '{{numero}}', '{{montant}}', '{{acompte}}', '{{date}}', '{{validite}}', '{{lien}}', '{{contact}}', '{{telephone}}', '{{etablissement}}'];
+  const VARS = ['{{prenom}}', '{{societe}}', '{{numero}}', '{{montant}}', '{{acompte}}', '{{date}}', '{{validite}}', '{{lien}}', '{{paiement}}', '{{contact}}', '{{telephone}}', '{{etablissement}}'];
   let mailSel = 0;
   V.mails = async ({ params }) => {
     const tab = params.get('onglet') || 'mails';
@@ -429,12 +429,12 @@
   };
 
   // ================= Paramètres =================
-  const TABS = [['entreprise', 'Identité et mentions'], ['devis', 'Devis'], ['paiements', 'Paiements'], ['activites', 'Activités'], ['couleurs', 'Logo et couleurs'], ['formulaire', 'Formulaire du site'], ['integrations', 'Intégrations'], ['acces', 'Accès et RGPD'], ['api', 'MCP et API']];
+  const TABS = [['entreprise', 'Identité et mentions'], ['devis', 'Devis'], ['paiements', 'Paiements'], ['activites', 'Activités'], ['couleurs', 'Logo et couleurs'], ['formulaire', 'Formulaire du site'], ['integrations', 'Intégrations'], ['acces', 'Accès et RGPD']];
   let S = null;
   const COLOR_LABELS = { primary: 'principale', secondary: 'secondaire', accent: 'accent', background: 'fond', card: 'cartes', text: 'texte' };
 
   V.settings = async ({ parts }) => {
-    const tab = parts[1] || 'entreprise';
+    const tab = parts[1] === 'api' ? 'integrations' : parts[1] || 'entreprise';
     S = await api('GET', '/api/settings');
     let body = '';
     const field = (k, l, v, attrs = '') => h`<label class="field"><span>${l}</span><input name="${k}" value="${v ?? ''}" ${raw(attrs)}></label>`;
@@ -531,21 +531,10 @@
         <button class="btn btn-ghost" id="save-types" style="margin-top:10px">Enregistrer les types</button></div></div>`;
     } else if (tab === 'integrations') {
       const st = await api('GET', '/api/integrations');
-      const line = (l, s) => h`<div class="row"><span>${l}</span><span class="${s.ok ? 'status-ok' : 'status-ko'}">${s.ok ? '✓ ' : ''}${s.label}</span></div>`;
-      body = h`<div class="grid g2"><div class="card"><span class="label">Les intégrations</span><div class="rows">
-        ${line('Connexion Google', st.google)}${line('Stripe', st.stripe)}${line('Resend', st.resend)}${line('Boîte de réception', st.inbox)}${line('Google Analytics', st.analytics)}${line('Google Agenda', st.calendar)}${line('Cloudflare Turnstile', st.turnstile)}${line('Site', st.site)}</div>
-        <p class="small accent-text" style="margin-top:12px">Les clés restent dans le .env du serveur : jamais affichées ici.</p>
-        ${st.stripe.error ? h`<p class="small error">Stripe : ${st.stripe.error}</p>` : ''}${st.analytics.error ? h`<p class="small error">Analytics : ${st.analytics.error}</p>` : ''}${st.calendar.error ? h`<p class="small error">Agenda : ${st.calendar.error}</p>` : ''}
-        <label class="switch" style="margin-top:16px"><input type="checkbox" id="sirene" ${S.integrations.sirene ? 'checked' : ''}><i></i>Option : recherche d'entreprise (base Sirene de l'INSEE, gratuite) dans « Nouveau devis »</label>
-        <label class="switch" style="margin-top:10px"><input type="checkbox" id="demo" ${S.demo ? 'checked' : ''}><i></i>Afficher le badge « Données d'exemple »</label></div>
-        <div class="card"><span class="label">Adresses à recopier</span>
-        ${[['URI de redirection Google', st.urls.google_redirect], ['Webhook Stripe', st.urls.stripe_webhook], ['Webhook Resend', st.urls.resend_webhook], ['Script du site', st.urls.embed], ['MCP (jeton dans MCP et API)', st.urls.mcp]].map(([l, u]) => h`<p class="small"><b>${l}</b></p><div class="copy"><code>${u}</code><button class="btn btn-sm btn-ghost" data-copy="${u}">Copier</button></div>`)}
-        ${st.service_account ? h`<p class="small"><b>Compte de service Google</b> (à ajouter en lecteur dans Analytics et en éditeur de l'agenda)</p><div class="copy"><code>${st.service_account}</code></div>` : ''}</div></div>`;
-    } else if (tab === 'api') {
       const tokens = await api('GET', '/api/tokens');
       const base = S.app_url;
       const ex = [['GET', '/api/deals', 'les demandes (filtres : stage, source, type, q)'], ['GET', '/api/deals/{id}', 'une demande complète'], ['POST', '/api/deals', 'créer une demande'], ['GET', '/api/contacts', 'les contacts'], ['GET', '/api/quotes', 'les devis'], ['GET', '/api/payments', 'les paiements'], ['GET', '/api/messages', 'les messages à traiter'], ['GET', '/api/dashboard?periode=mois', 'les chiffres du tableau de bord']];
-      body = h`<div class="grid g2">${tokensCard(tokens)}
+      const apiBody = h`<div class="grid g2">${tokensCard(tokens)}
         <div class="card"><span class="label">Brancher d'autres outils</span>
           <p class="small"><b>Claude (MCP)</b> · Claude › Paramètres › Connecteurs › Ajouter un connecteur personnalisé › l'adresse donnée à la création du jeton :</p>
           <div class="copy"><code>${base}/mcp/&lt;jeton&gt;</code></div>
@@ -555,8 +544,20 @@
           <p class="small muted">Réponses en JSON. Le jeton a les droits de la personne qui l'a créé : un jeton « accueil » ne voit pas les paramètres.</p>
           <p class="small" style="margin-top:14px"><b>Formulaires du site</b> · un site peut envoyer ses demandes à <code>${base}/api/public/demandes</code> avec l'en-tête <code>X-Api-Key</code> : ${S.site_api ? h`<span class="status-ok">clé réglée dans le .env</span>` : h`<span class="status-ko">clé SITE_API_KEY à mettre dans le .env</span>`}.</p>
           <p class="small"><b>Notifications reçues</b> · Stripe : <code>${base}/api/stripe/webhook</code> · Resend : <code>${base}/api/resend/webhook</code></p>
-          <p class="small muted">Un nouvel outil à brancher ? Donnez sa documentation à Claude : « Branche [outil] au CRM avec un jeton de Paramètres › MCP et API ».</p>
+          <p class="small muted">Un nouvel outil à brancher ? Donnez sa documentation à Claude : « Branche [outil] au CRM avec un jeton de Paramètres › Intégrations ».</p>
         </div></div>`;
+      const line = (l, s) => h`<div class="row"><span>${l}</span><span class="${s.ok ? 'status-ok' : 'status-ko'}">${s.ok ? '✓ ' : ''}${s.label}</span></div>`;
+      body = h`<div class="grid g2"><div class="card"><span class="label">Les intégrations</span><div class="rows">
+        ${line('Connexion Google', st.google)}${line('Stripe', st.stripe)}${line('Resend', st.resend)}${line('Boîte de réception', st.inbox)}${line('Google Analytics', st.analytics)}${line('Google Agenda', st.calendar)}${line('Cloudflare Turnstile', st.turnstile)}${line('Site', st.site)}</div>
+        <p class="small accent-text" style="margin-top:12px">Les clés restent dans le .env du serveur : jamais affichées ici.</p>
+        ${st.stripe.error ? h`<p class="small error">Stripe : ${st.stripe.error}</p>` : ''}${st.analytics.error ? h`<p class="small error">Analytics : ${st.analytics.error}</p>` : ''}${st.calendar.error ? h`<p class="small error">Agenda : ${st.calendar.error}</p>` : ''}
+        <label class="switch" style="margin-top:16px"><input type="checkbox" id="sirene" ${S.integrations.sirene ? 'checked' : ''}><i></i>Option : recherche d'entreprise (base Sirene de l'INSEE, gratuite) dans « Nouveau devis »</label>
+        <label class="switch" style="margin-top:10px"><input type="checkbox" id="demo" ${S.demo ? 'checked' : ''}><i></i>Afficher le badge « Données d'exemple »</label></div>
+        <div class="card"><span class="label">Adresses à recopier</span>
+        ${[['URI de redirection Google', st.urls.google_redirect], ['Webhook Stripe', st.urls.stripe_webhook], ['Webhook Resend', st.urls.resend_webhook], ['Script du site', st.urls.embed], ['MCP (jeton ci-dessous)', st.urls.mcp]].map(([l, u]) => h`<p class="small"><b>${l}</b></p><div class="copy"><code>${u}</code><button class="btn btn-sm btn-ghost" data-copy="${u}">Copier</button></div>`)}
+        ${st.service_account ? h`<p class="small"><b>Compte de service Google</b> (à ajouter en lecteur dans Analytics et en éditeur de l'agenda)</p><div class="copy"><code>${st.service_account}</code></div>` : ''}</div></div>
+        <h3 class="section-title" style="margin-top:24px">Connecter d'autres outils : API et MCP</h3>
+        ${apiBody}`;
     }
     const saveBtn = ['entreprise', 'couleurs', 'acces', 'devis', 'paiements', 'formulaire'].includes(tab);
     return h`${head('Paramètres', 'Votre entreprise', saveBtn ? h`<button class="btn btn-primary" id="save">Enregistrer</button>` : '')}
@@ -588,7 +589,7 @@
   }
 
   V.settings.bind = (root, { parts }) => {
-    const tab = parts[1] || 'entreprise';
+    const tab = parts[1] === 'api' ? 'integrations' : parts[1] || 'entreprise';
     const put = (key, value, extra = {}) => api('PUT', `/api/settings/${key}`, { value, ...extra });
     const done = async (msg = 'Paramètres enregistrés.') => { toast(msg); await CRM.loadMe(); CRM.refresh(); };
     $$('[data-copy]', root).forEach((b) => b.onclick = () => copy(b.dataset.copy));
@@ -637,8 +638,8 @@
         await done('Types enregistrés.');
       });
     }
-    if (tab === 'api') bindTokens(root);
     if (tab === 'integrations') {
+      bindTokens(root);
       $('#demo', root).onchange = (e) => busy(null, async () => { await put('demo', e.target.checked); await done(); });
       $('#sirene', root).onchange = (e) => busy(null, async () => { await put('integrations', { ...S.integrations, sirene: e.target.checked }); await done(e.target.checked ? 'Recherche INSEE activée.' : 'Recherche INSEE désactivée.'); });
     }

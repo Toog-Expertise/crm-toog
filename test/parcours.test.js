@@ -407,3 +407,18 @@ test('1.3 : la plaquette vient du mail d’envoi du devis', async () => {
   await call('PUT', '/api/settings/mails', { value: { devis: { subject: t.subject, body: t.body.replace('collez ici le lien de partage de votre plaquette (Google Drive)', 'https://drive.google.com/file/d/exemple/view') } } });
   assert.equal(sign.brochureUrl(), 'https://drive.google.com/file/d/exemple/view');
 });
+
+test('1.4 : le mail du devis donne le paiement choisi (IBAN si le virement est proposé)', async () => {
+  const quotes = require('../src/quotes');
+  const q = db.get("SELECT * FROM quotes WHERE status != 'signed' AND deposit_cents > 0 ORDER BY id DESC LIMIT 1");
+  const r = await call('PUT', '/api/settings/payments', { value: { rib: true, stripe: false, holder: 'Crystana TEST', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const v = quotes.quoteVars(quotes.getQuote(q.id), { lien: 'https://crm.exemple.fr/s/jeton' });
+  assert.match(v.paiement, /IBAN : FR76 3000 6000 0112 3456 7890 189/);
+  assert.match(v.paiement, new RegExp(`Référence : ${q.number}`));
+  const out = mail.render('devis', v);
+  assert.match(out.text, /IBAN : FR76/);
+  await call('PUT', '/api/settings/payments', { value: { rib: false, stripe: false } });
+  assert.equal(quotes.quoteVars(quotes.getQuote(q.id), { lien: 'x' }).paiement, '');
+  assert.ok(!mail.render('devis', quotes.quoteVars(quotes.getQuote(q.id), { lien: 'https://crm.exemple.fr/s/jeton' })).text.includes('{{'));
+});

@@ -130,7 +130,7 @@
     { key: 'contacts', href: '#/contacts', label: 'Contacts' },
     { key: 'paiements', href: '#/paiements', label: 'Paiements' },
     { key: 'agenda', href: '#/agenda', label: 'Agenda' },
-    { key: 'api', href: '#/parametres/api', label: 'MCP et API' },
+    { key: 'api', href: '#/parametres/integrations', label: 'Intégrations (API et MCP)' },
   ];
   const can = (area) => CRM.me.access.includes(area);
 

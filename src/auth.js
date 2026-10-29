@@ -50,7 +50,7 @@ function startSession(res, user, req) {
   setCookie(res, COOKIE, token, { secure: secure(), maxAge: SESSION_DAYS * 86400 });
 }
 
-// Jeton personnel (Paramètres › MCP et API) : utilisable par Claude (MCP) et par l'API, avec les droits de la personne
+// Jeton personnel (Paramètres › Intégrations) : utilisable par Claude (MCP) et par l'API, avec les droits de la personne
 function userFromToken(req, pathToken) {
   const h = req.headers.authorization || '';
   const token = pathToken || (h.startsWith('Bearer ') ? h.slice(7).trim() : '');
