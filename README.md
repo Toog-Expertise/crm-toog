@@ -4,6 +4,8 @@ Le CRM commun de Toog Expertise pour les établissements de loisirs, d'événeme
 
 Chaque entreprise installe sa propre copie sur son serveur, puis règle dans le CRM son nom, son logo, ses couleurs et ses prix. Le dépôt ne contient aucune donnée d'entreprise ni aucune clé.
 
+**Le dépôt de référence.** Tout le monde part de ce dépôt, pour avoir exactement la même interface : sur GitHub, **Use this template › Create a new repository** (privé, à votre nom, par exemple `crm-mon-entreprise`). Les couleurs par défaut sont neutres (bleu, fond clair). Pour mettre le CRM à vos couleurs, en deux minutes : **Paramètres › Logo et couleurs** (le contraste est vérifié, une couleur illisible est refusée).
+
 ## Ce que fait le CRM
 
 Un CRM d'automatisation commerciale **B2B** : le client remplit un formulaire, reçoit son devis, le valide, paie l'acompte, et tout se suit dans le CRM.

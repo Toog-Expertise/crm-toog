@@ -1,6 +1,6 @@
 /* Devis automatique B2B (modèle Privacy Escape) : 4 étapes avec une jauge (biais de complétude), activité, groupe,
-   entreprise, coordonnées, puis « Recevoir mon devis » ; le prix se calcule en direct depuis le catalogue du CRM.
-   À l'envoi, le serveur recalcule tout : le prix affiché ici n'est jamais repris tel quel. */
+   entreprise, coordonnées, puis « Recevoir mon devis ». Pas d'estimation pendant qu'on remplit : le prix n'apparaît
+   qu'à la fin, avec le devis, calculé par le serveur depuis le catalogue du CRM. */
 'use strict';
 (function () {
   const sendHeight = () => { if (window.parent !== window) window.parent.postMessage({ crmHeight: document.documentElement.scrollHeight }, '*'); };
@@ -11,27 +11,10 @@
   if (!root || !form) return;
   const title = document.getElementById('auto-title');
   const stepEl = document.getElementById('auto-step');
-  const money = (c) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(c / 100);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let cat = null;
   const st = { step: 1, product: null, people: 10, date: '', options: [], company: '', first_name: '', last_name: '', role: '', email: '', phone: '', consent: false };
   const STEPS = ['votre activité', 'votre groupe', 'votre entreprise', 'vos coordonnées'];
-
-  function lines() {
-    const p = cat.activities.find((a) => a.id === st.product);
-    if (!p) return { rows: [], total: 0 };
-    const qty = (x) => (x.pricing === 'per_person' ? Math.max(st.people, x.min_people || 0) : 1);
-    const rows = [{ label: p.pricing === 'per_person' ? `${qty(p)} personnes × ${money(p.price_cents)}` : p.name, total: qty(p) * p.price_cents }];
-    for (const o of cat.options.filter((x) => st.options.includes(x.id))) rows.push({ label: o.name, total: qty(o) * o.price_cents });
-    return { rows, total: rows.reduce((s, r) => s + r.total, 0), min: p.pricing === 'per_person' && p.min_people && st.people < p.min_people ? p.min_people : null, max: p.max_people };
-  }
-
-  function summary() {
-    const l = lines();
-    return `<div class="pub-box"><table class="pub-lines">${l.rows.map((r) => `<tr><td>${esc(r.label)}</td><td>${money(r.total)}</td></tr>`).join('')}</table>
-      <div class="pub-total"><span><b>Total TTC</b></span><strong>${money(l.total)}</strong></div>
-      ${l.min ? `<small class="muted">Minimum ${l.min} personnes facturées.</small>` : ''}</div>`;
-  }
 
   function render() {
     const p = cat.activities.find((a) => a.id === st.product);
@@ -48,17 +31,15 @@
       form.innerHTML = `<div class="field"><span>Activité</span><input value="${esc(p.name)}" disabled></div>
         <div class="field custom"><span>Nombre de personnes</span><div class="stepper"><button type="button" data-d="-1" aria-label="Moins">−</button><output>${st.people}</output><button type="button" data-d="1" aria-label="Plus">+</button></div></div>
         <label class="field"><span>Date souhaitée</span><input type="datetime-local" name="date" value="${esc(st.date)}" required></label>
-        ${opts.length ? `<div class="field"><span>Options</span>${opts.map((o) => `<label class="check"><input type="checkbox" data-o="${o.id}" ${st.options.includes(o.id) ? 'checked' : ''}><span>${esc(o.name)} · ${money(o.price_cents)}${o.pricing === 'per_person' ? ' / pers.' : ''}</span></label>`).join('')}</div>` : ''}
-        <div id="sum">${summary()}</div>
+        ${opts.length ? `<div class="field"><span>Options</span>${opts.map((o) => `<label class="check"><input type="checkbox" data-o="${o.id}" ${st.options.includes(o.id) ? 'checked' : ''}><span>${esc(o.name)}</span></label>`).join('')}</div>` : ''}
         <p class="error" id="auto-err" hidden></p>
         <div class="actions" style="justify-content:space-between"><button type="button" class="btn btn-ghost" data-back>Retour</button><button class="btn btn-primary" type="submit">Continuer</button></div>`;
       form.querySelectorAll('[data-d]').forEach((b) => b.onclick = () => {
         const max = p.max_people || 500;
         st.people = Math.min(max, Math.max(1, st.people + Number(b.dataset.d)));
         form.querySelector('output').textContent = st.people;
-        form.querySelector('#sum').innerHTML = summary();
       });
-      form.querySelectorAll('[data-o]').forEach((c) => c.onchange = () => { const id = Number(c.dataset.o); st.options = c.checked ? [...st.options, id] : st.options.filter((x) => x !== id); form.querySelector('#sum').innerHTML = summary(); });
+      form.querySelectorAll('[data-o]').forEach((c) => c.onchange = () => { const id = Number(c.dataset.o); st.options = c.checked ? [...st.options, id] : st.options.filter((x) => x !== id); });
       form.date.oninput = () => { st.date = form.date.value; };
     } else if (st.step === 3) {
       title.innerHTML = 'Votre<br>entreprise';
@@ -73,7 +54,7 @@
       if (cat.sirene) bindSirene();
     } else if (st.step === 4) {
       title.innerHTML = 'Vos<br>coordonnées';
-      form.innerHTML = `${summary()}
+      form.innerHTML = `
         <label class="field"><span>Mail (pour recevoir le devis)</span><input type="email" name="email" autocomplete="email" required value="${esc(st.email)}"></label>
         <label class="field"><span>Téléphone</span><input type="tel" name="phone" autocomplete="tel" value="${esc(st.phone)}"></label>
         <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">

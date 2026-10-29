@@ -70,7 +70,7 @@ test('protection : autre origine refusée, pages sans session redirigées', asyn
 });
 
 test('paramètres : couleurs illisibles refusées, catalogue créé', async () => {
-  const bad = await call('PUT', '/api/settings/colors', { value: { ...settings.DEFAULTS.colors, text: '#222222' } });
+  const bad = await call('PUT', '/api/settings/colors', { value: { ...settings.DEFAULTS.colors, text: '#DDDDDD' } });
   assert.equal(bad.status, 422);
   assert.ok(bad.data.issues[0].suggestion);
   const good = await call('PUT', '/api/settings/colors', { value: { ...settings.DEFAULTS.colors, primary: '#7B2CBF' } });

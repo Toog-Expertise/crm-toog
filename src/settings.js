@@ -54,7 +54,7 @@ const DEAL_TYPES = [
 const DEFAULTS = {
   // Tout ce qui figure sur les devis : identité, mentions légales, contact affiché sur la page de validation
   company: { name: 'Mon entreprise', legal_name: '', legal_form: '', capital: '', address: '', phone: '', email: '', website: '', siret: '', rcs: '', vat_number: '', tagline: '', contact_name: '', contact_phone: '', presentation: '', highlights: '' },
-  colors: { primary: '#5B4BDB', secondary: '#B03FBF', accent: '#4ADE80', background: '#0F0F17', card: '#1C1B2B', text: '#E6E4F0' },
+  colors: { primary: '#2F5BEA', secondary: '#1E3A8A', accent: '#16A34A', background: '#F5F6F8', card: '#FFFFFF', text: '#1F2937' },
   fonts: { title: 'Lexend Deca', text: 'DM Sans', title_uppercase: true },
   logo: '',
   access: { allowed_domain: '', google: false },

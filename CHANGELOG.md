@@ -2,6 +2,12 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.5.0 · 29 octobre 2026 · dépôt de référence
+
+- Le dépôt sert de modèle (« Use this template ») : tout le monde part de la même interface.
+- Couleurs par défaut neutres et claires (bleu, fond clair) au lieu du thème violet sombre ; on les change en deux minutes dans Paramètres › Logo et couleurs.
+- Formulaire du site : plus d'estimation pendant qu'on remplit ; le prix n'apparaît qu'à la fin, avec le devis, après « Recevoir mon devis ».
+
 ## 1.4.0 · 29 octobre 2026
 
 - Paramètres › Intégrations regroupe tout ce qui se branche : l'état des services (Stripe, Resend, Turnstile, site…), les adresses à recopier, l'option INSEE, et la partie API et MCP (jetons, adresse MCP pour Claude, adresses de l'API) pour connecter d'autres outils. L'ancien onglet « MCP et API » y renvoie.
