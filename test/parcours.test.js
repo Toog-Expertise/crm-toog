@@ -465,3 +465,17 @@ test('1.6 : paiement intégral (acompte à 100 %) et « Tout régler maintenant 
   await call('PUT', '/api/settings/payments', { value: { rib: false, stripe: false } });
   config.stripe.secret = '';
 });
+
+test('1.7 : le formulaire codé du site appelle le CRM (CORS limité à l’adresse du site)', async () => {
+  await call('PUT', '/api/settings/integrations', { value: { ...settings.get('integrations'), site_url: 'https://site.exemple.fr' } });
+  const pre = await fetch(base + '/api/public/devis-auto', { method: 'OPTIONS', headers: { Origin: 'https://site.exemple.fr', 'Access-Control-Request-Method': 'POST' } });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), 'https://site.exemple.fr');
+  const cat = await fetch(base + '/api/public/catalogue', { headers: { Origin: 'https://site.exemple.fr' } });
+  assert.equal(cat.headers.get('access-control-allow-origin'), 'https://site.exemple.fr');
+  const other = await fetch(base + '/api/public/catalogue', { headers: { Origin: 'https://pirate.example' } });
+  assert.equal(other.headers.get('access-control-allow-origin'), null);
+  // Les adresses du back-office ne s'ouvrent jamais au site
+  const priv = await fetch(base + '/api/settings/company', { method: 'OPTIONS', headers: { Origin: 'https://site.exemple.fr' } });
+  assert.equal(priv.headers.get('access-control-allow-origin'), null);
+});

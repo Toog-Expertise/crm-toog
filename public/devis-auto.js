@@ -1,4 +1,4 @@
-/* Devis automatique B2B (modèle Privacy Escape) : 4 étapes avec une jauge (biais de complétude), activité, groupe,
+/* Devis automatique B2B : 4 étapes avec une jauge (biais de complétude), activité, groupe,
    entreprise, coordonnées, puis « Recevoir mon devis ». Pas d'estimation pendant qu'on remplit : le prix n'apparaît
    qu'à la fin, avec le devis, calculé par le serveur depuis le catalogue du CRM. */
 'use strict';

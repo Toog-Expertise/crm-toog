@@ -101,6 +101,11 @@ function securityHeaders(res, pathname) {
   if (config.appUrl.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 }
 
+const SITE_ROUTES = /^\/api\/public\/(catalogue|devis-auto|sirene)$/;
+function siteOrigin() {
+  try { return new URL(settings.get('integrations').site_url).origin; } catch { return null; }
+}
+
 const masked = (p) => p.replace(/^\/(s|p|mcp)\/[^/]+/, '/$1/•••');
 
 const server = http.createServer(async (req, res) => {
@@ -109,6 +114,16 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
   req.query = url.searchParams;
   securityHeaders(res, pathname);
+  // Le formulaire codé du site (une autre adresse) appelle directement ces adresses publiques :
+  // seule l'adresse du site réglée dans Paramètres › Formulaire du site est acceptée
+  if (SITE_ROUTES.test(pathname) && req.headers.origin && req.headers.origin === siteOrigin()) {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+    res.setHeader('Vary', 'Origin');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' });
+      return res.end();
+    }
+  }
   res.on('finish', () => {
     if (req.method !== 'HEAD' && !pathname.startsWith('/static/') && pathname !== '/theme.css' && pathname !== '/sante') console.log(`${req.method} ${masked(pathname)} ${res.statusCode} ${Date.now() - t0} ms`);
   });

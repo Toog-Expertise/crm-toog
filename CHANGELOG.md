@@ -2,6 +2,11 @@
 
 Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a son étiquette git (`v1.0.0`…), installable avec `sudo ./update.sh v1.0.0`.
 
+## 1.7.0 · 30 octobre 2026 · formulaire codé du site
+
+- Le formulaire codé du site (sans extension) appelle directement le CRM : /api/public/catalogue et /api/public/devis-auto acceptent l'adresse du site réglée dans Paramètres › Formulaire du site, et elle seule (CORS). Les adresses du back-office restent fermées.
+- Plus aucune référence à un site tiers dans le code et le journal.
+
 ## 1.6.0 · 29 octobre 2026 · paiement intégral
 
 - Paramètres › Paiements › Stripe : nouvelle case « Proposer aussi « Tout régler maintenant » ». Après la validation, le client choisit sur sa page : payer l'acompte, ou tout régler en une fois ; la demande passe alors directement en « Soldé ».
@@ -38,7 +43,7 @@ Les versions suivent la règle « majeure.mineure.correctif ». Chaque version a
 - Mails auto : envoi du devis (avec le lien de la plaquette dans le texte), 2 relances signature, 2 relances acompte, M+3, M+12 ; actif ou non, délai, texte, test.
 - Équipe : prénom, nom, mail, mot de passe choisi par le gérant ; connexion par mail et mot de passe ; tout le monde a tous les droits. Google reste une option désactivée.
 - Paramètres : identité et mentions légales (forme juridique, capital, RCS…), numérotation qui reprend à un numéro choisi, acompte par défaut fixe ou en %.
-- Aligné sur les écrans montrés le 28/10 (prototype de Benjamin, PlayPro, Privacy Escape) : page Devis avec réf., client · événement, paiement et « prochaine action auto » (bouton « Valider l'acompte reçu »), étapes en pastilles, export CSV ; Mails auto en parcours (Signature, Acompte, Fidélisation) avec déclencheur, règle d'arrêt, chiffres et aperçu ; « Demander un acompte » sous le total TTC ; page client « On a hâte de vous accueillir » avec 3 points forts ; recherche d'entreprise (option) dans le formulaire du site ; règles d'arrêt M+3 et M+12.
+- Aligné sur les écrans montrés le 28/10 (prototype de Benjamin, PlayPro, formulaire de devis en ligne) : page Devis avec réf., client · événement, paiement et « prochaine action auto » (bouton « Valider l'acompte reçu »), étapes en pastilles, export CSV ; Mails auto en parcours (Signature, Acompte, Fidélisation) avec déclencheur, règle d'arrêt, chiffres et aperçu ; « Demander un acompte » sous le total TTC ; page client « On a hâte de vous accueillir » avec 3 points forts ; recherche d'entreprise (option) dans le formulaire du site ; règles d'arrêt M+3 et M+12.
 - Responsive : page Devis en cartes sur téléphone, chiffres sur une ligne, étapes qui défilent, résumé du devis en tête de la page client.
 
 ## 1.2.0 · 28 octobre 2026

@@ -135,7 +135,7 @@ window.addEventListener('message',function(e){if(e.origin!==${JSON.stringify(new
   // --- Devis automatique ---
   router.get('/api/public/catalogue', (req, res) => json(res, { ...pricing.publicCatalog(), sirene: Boolean(settings.get('integrations').sirene) }));
 
-  // Recherche d'entreprise du formulaire (option, comme Privacy Escape) : nom ou SIRET -> fiche Sirene
+  // Recherche d'entreprise du formulaire (option) : nom ou SIRET -> fiche Sirene
   router.get('/api/public/sirene', async (req, res) => {
     if (!settings.get('integrations').sirene) throw new HttpError(404, 'Recherche indisponible.');
     if (!rate.hit('sirene:' + clientIp(req), 30, 60e3)) throw new HttpError(429, 'Trop de recherches : patientez un instant.');
